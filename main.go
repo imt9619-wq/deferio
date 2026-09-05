@@ -1,60 +1,41 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 
-	"github.com/sandertv/gophertunnel/minecraft"
-	"github.com/sandertv/gophertunnel/minecraft/auth"
-	"golang.org/x/oauth2"
+	"github.com/deferio/diohandler"
+	"github.com/df-mc/dragonfly/server"
+	"github.com/df-mc/dragonfly/server/player"
+	"github.com/df-mc/dragonfly/server/player/chat"
 )
 
-type config struct {
-	Connection struct {
-		LocalAddress  string
-		RemoteAddress string
-	}
-}
+const address = "127.0.0.1:19133"
 
-// The following program implements a proxy that forwards players from one local address to a remote address.
 func main() {
-	config := config{}
-	config.Connection.LocalAddress = "0.0.0.0:19133"
-	config.Connection.RemoteAddress = "0.0.0.0:19132"
-	token, err := auth.RequestLiveToken()
-	if err != nil {
-		panic(err)
-	}
-	src := auth.RefreshTokenSource(token)
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	chat.Global.Subscribe(chat.StdoutSubscriber{})
 
-	p, err := minecraft.NewForeignStatusProvider(config.Connection.RemoteAddress)
+	c := server.DefaultConfig()
+	c.Network.Address = address
+	conf, err := c.Config(slog.Default())
+	diohandler.InjectDioListener(conf, address)
+	
 	if err != nil {
 		panic(err)
 	}
-	listener, err := minecraft.ListenConfig{
-		StatusProvider: p,
-	}.Listen("raknet", config.Connection.LocalAddress)
-	if err != nil {
-		panic(err)
-	}
-	defer listener.Close()
-	for {
-		c, err := listener.Accept()
-		if err != nil {
+	srv := conf.New()
+	srv.CloseOnProgramEnd()
+
+	srv.Listen()
+	for p := range srv.Accept() {
+		h, err := diohandler.NewDioHandler(p, Handler{})
+		if err != nil{
 			panic(err)
 		}
-		go handleConn(c.(*minecraft.Conn), listener, config, src)
+		p.Handle(h)
 	}
 }
 
-// handleConn handles a new incoming minecraft.Conn from the minecraft.Listener passed.
-func handleConn(conn *minecraft.Conn, listener *minecraft.Listener, config config, src oauth2.TokenSource) {
-	serverConn, err := minecraft.Dialer{
-		TokenSource: src,
-		ClientData:  conn.ClientData(),
-	}.Dial("raknet", config.Connection.RemoteAddress)
-	if err != nil {
-		panic(err)
-	}
-	s := NewSession(conn, serverConn, listener)
-	fmt.Printf("Error on session: %s\n", s.InitializePlayer())
+type Handler struct{
+	player.NopHandler
 }
