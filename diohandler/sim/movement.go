@@ -1,6 +1,7 @@
 package diosim
 
 import (
+	dioblocks "github.com/deferio/diohandler/blocks"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
@@ -16,10 +17,14 @@ const(
 type MovementInput struct{
 	Up, Down, Left, Right        bool
     Sneak, Sprint, Jump, Swim    bool
-	Position, Velocity, Inplause mgl64.Vec3
+    Position, Velocity, Inplause mgl64.Vec3
     OnGround                     bool
     JumpCooldown                 uint
     Tx                           *world.Tx
+    onClimb                      bool
+    yaw, pitch                   float64
+    slipperiness                 float64
+    baseSpeed                    float64
 }
 
 type MovementResult struct{
@@ -60,6 +65,27 @@ func (in MovementInput) PlayerBBox(pos mgl64.Vec3) cube.BBox{
 	}
 }
 
-func SimMovement(in MovementInput) {
-	
+func SimMovement(in MovementInput) MovementResult{
+	i := &in
+	i.setJumpCooldown()
+	i.setOnClimb()
+	return MovementResult{
+		Position: i.Position,
+		Velocity: i.Velocity,
+		OnGround: i.OnGround,
+		JumpCooldown: i.JumpCooldown,
+	}
+}
+
+func (in *MovementInput) setJumpCooldown(){
+	if !in.Jump{
+		in.JumpCooldown = 0
+		return
+	}else{
+		in.JumpCooldown = max(0, in.JumpCooldown-1)
+	}
+}
+
+func (in *MovementInput) setOnClimb(){
+	in.onClimb = dioblocks.DFblockToBlock(in.Tx.Block(cube.PosFromVec3(in.Position))).Climbable()
 }

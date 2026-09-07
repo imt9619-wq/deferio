@@ -18,7 +18,7 @@ func main() {
 	c := server.DefaultConfig()
 	c.Network.Address = address
 	conf, err := c.Config(slog.Default())
-	diohandler.InjectDioListener(conf, address)
+	diohandler.InterceptPacket(conf, address)
 	
 	if err != nil {
 		panic(err)
@@ -28,11 +28,7 @@ func main() {
 
 	srv.Listen()
 	for p := range srv.Accept() {
-		h, err := diohandler.NewDioHandler(p, Handler{})
-		if err != nil{
-			panic(err)
-		}
-		p.Handle(h)
+		diohandler.SetPlayerHandler(p, Handler{})
 	}
 }
 

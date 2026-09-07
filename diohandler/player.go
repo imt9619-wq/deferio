@@ -1,6 +1,9 @@
 package diohandler
 
-import "github.com/go-gl/mathgl/mgl64"
+import (
+	"github.com/df-mc/dragonfly/server/player"
+	"github.com/go-gl/mathgl/mgl64"
+)
 
 type dioPlayer struct{
 	pos mgl64.Vec3
@@ -9,6 +12,11 @@ type dioPlayer struct{
 	onClimb bool
 	yaw float64
 	serverInplause map[uint]mgl64.Vec3
+}
+
+func newDioPlayer(p *player.Player) *dioPlayer{
+	dp := &dioPlayer{}
+	return dp
 }
 
 func (d *dioPlayer) Position() mgl64.Vec3{

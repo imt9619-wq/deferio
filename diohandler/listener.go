@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"reflect"
-	"unsafe"
 
+	"github.com/deferio/diohandler/utils"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/sandertv/gophertunnel/minecraft"
@@ -17,7 +16,7 @@ type dioListener struct{
 	*minecraft.Listener
 }
 
-func InjectDioListener(conf server.Config, address string) server.Config{
+func InterceptPacket(conf server.Config, address string) server.Config{
 	conf.Listeners = []func(conf server.Config) (server.Listener, error){
 		func(conf server.Config) (server.Listener, error) {
 			cfg := minecraft.ListenConfig{
@@ -54,7 +53,7 @@ func (d dioListener) Accept() (session.Conn, error){
 	}
 	return &dioSessionConn{
 		Conn: conn.(session.Conn), 
-		}, nil
+	}, nil
 }
 
 func (d dioListener) Disconnect(conn session.Conn, reason string) error{
@@ -69,12 +68,16 @@ func (c *dioSessionConn) ReadPacket() (packet.Packet, error){
 	if err != nil {
 		return nil, err
 	}
-	c.h.HandleClientPacket(pk)
+	if c.h != nil{
+		c.h.HandleClientPacket(pk)
+	}
 	return pk, nil
 }
 
 func (c *dioSessionConn) WritePacket(pk packet.Packet) error{
-	c.h.HandleServerPacket(pk)
+	if c.h != nil{
+		c.h.HandleServerPacket(pk)
+	}
 	return c.Conn.WritePacket(pk)
 }
 
@@ -82,14 +85,10 @@ func SessionDioConn(s *session.Session) (*dioSessionConn, bool){
 	if s == nil {
 		return nil, false
 	}
-	reflectField := reflect.ValueOf(s).Elem().FieldByName("conn")
-	if !reflectField.IsValid() {
+	conn, ok := utils.PrivateFieldByName[session.Conn](s, "conn")
+	if !ok {
 		return nil, false
 	}
-	conn := reflect.NewAt(reflectField.Type(), unsafe.Pointer(reflectField.UnsafeAddr())).
-		Elem().
-		Interface().
-		(session.Conn)
 	wrapped, ok := conn.(*dioSessionConn)
 	if !ok {
 		return nil, false

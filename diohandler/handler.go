@@ -1,12 +1,10 @@
 package diohandler
 
 import (
-	"fmt"
-
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/session"
-	"github.com/go-gl/mathgl/mgl64"
+	"github.com/df-mc/dragonfly/server/world"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
@@ -16,33 +14,56 @@ type DioHandler struct{
 	p *dioPlayer
 }
 
-func NewDioHandler(p *player.Player, h player.Handler) (*DioHandler, error){
+func NewDioHandler(p *player.Player) *DioHandler{
 	dih := &DioHandler{
 		s: p.Data().Session,
-		Handler: h,
 	}
 	conn, ok := SessionDioConn(p.Data().Session)
-	if !ok{
-		return nil, fmt.Errorf("session.conn is not DioSessionCon for: %s", p.Name())
+	dih.p = newDioPlayer(p)
+	dih.registerSessionHandlers()
+	if ok{
+		conn.h = dih
 	}
-	conn.h = dih
-	return dih, nil
+	return dih
+}
+
+func SetPlayerHandler(p *player.Player, h player.Handler) error{
+	defer p.Handle(h)
+	ph := p.Handler()
+	dih, ok := ph.(*DioHandler)
+	if !ok{
+		dih = NewDioHandler(p)
+	}
+	dih.Handler = h
+	h = dih
+	return nil
 }
 
 func (d *DioHandler) HandleClientPacket(pk packet.Packet){
-	switch pk := pk.(type){
-	case *packet.PlayerAuthInput:
-		_ = pk
+	h, ok := IDToDioClientPacketHandler[pk.ID()]
+	if ok{
+		h.HandlePacket(pk, d)
 	}
 }
 
 func (d *DioHandler) HandleServerPacket(pk packet.Packet){
-	switch pk := pk.(type){
-	case *packet.AddPlayer:
-		_ = pk
+	h, ok := IDToDioServerPacketHandler[pk.ID()]
+	if ok{
+		h.HandlePacket(pk, d)
 	}
 }
 
-func (d *DioHandler) HandleMove(ctx *player.Context, pos mgl64.Vec3, c cube.Rotation){
-	ctx.Player().Position()
+func (d *DioHandler) HandleBlockPlace(ctx *player.Context, pos cube.Pos, b world.Block){
+	bbs := b.Model().BBox(pos, ctx.Tx)
+	if len(bbs) != 0{
+		for ent := range ctx.Tx.EntitiesWithin(cube.Box(0, 0, 0, 1, 1, 1).Translate(pos.Vec3())){
+			for _, bb := range bbs{
+				if ent.H().Type().BBox(ent).Translate(ent.Position()).IntersectsWith(bb.Translate(pos.Vec3())){
+					ctx.Cancel()
+					return
+				}
+			}
+		}
+	}
+	d.Handler.HandleBlockPlace(ctx, pos, b)
 }
