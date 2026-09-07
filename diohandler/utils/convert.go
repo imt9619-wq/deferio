@@ -8,12 +8,20 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
 )
 
+const(
+	ProbeOffset = 0.003
+)
+
 func BBox32FromBBox(bb cube.BBox) cube.BBox32{
 	return Box(Mgl32FromMgl64(bb.Min()), Mgl32FromMgl64(bb.Max()))
 }
 
 func Mgl32FromMgl64(vec mgl64.Vec3) mgl32.Vec3{
 	return mgl32.Vec3{float32(vec[0]), float32(vec[1]), float32(vec[2])}
+}
+
+func Mgl64FromMgl32(vec mgl32.Vec3) mgl64.Vec3{
+	return mgl64.Vec3{float64(vec[0]), float64(vec[1]), float64(vec[2])}
 }
 
 func Mgl32FromCubePos(pos cube.Pos) mgl32.Vec3{

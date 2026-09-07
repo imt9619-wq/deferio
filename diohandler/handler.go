@@ -11,7 +11,7 @@ import (
 type DioHandler struct{
 	player.Handler
 	s *session.Session
-	p *dioPlayer
+	p *playerCache
 }
 
 func NewDioHandler(p *player.Player) *DioHandler{
@@ -19,7 +19,7 @@ func NewDioHandler(p *player.Player) *DioHandler{
 		s: p.Data().Session,
 	}
 	conn, ok := SessionDioConn(p.Data().Session)
-	dih.p = newDioPlayer(p)
+	dih.p = newPlayerCache(p)
 	dih.registerSessionHandlers()
 	if ok{
 		conn.h = dih

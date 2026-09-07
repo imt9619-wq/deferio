@@ -7,7 +7,8 @@ import (
 
 type Block interface {
 	Climbable() bool
-	DFblock() world.Block
+	DFblock()   world.Block
+	Friction()  float64
 }
 
 func DFblockToBlock(b world.Block) Block{
@@ -21,47 +22,18 @@ func DFblockToBlock(b world.Block) Block{
 	}
 }
 
-type defaultPorp struct {
-	world.Block
+type defaultPorp struct{world.Block}
+func (defaultPorp) Climbable() bool{return false}
+func (dp defaultPorp) DFblock() world.Block{return dp.Block}
+func (dp defaultPorp) Friction() float64{
+	if bl, ok := dp.Block.(interface{Friction() float64}); ok{
+		return bl.Friction()
+	}
+	return 0.6
 }
 
-func (defaultPorp) Climbable() bool{
-	return false
-}
+type Ladder struct{defaultPorp}
+func (Ladder) Climbable() bool{return true}
 
-func (dp defaultPorp) DFblock() world.Block{
-	return dp.Block
-}
-
-type Ladder struct{
-	defaultPorp
-}
-
-func (Ladder) Climbable() bool{
-	return true
-}
-
-type Vines struct{
-	defaultPorp
-}
-
-func (Vines) Climbable() bool{
-	return true
-}
-
-type InvisibleBedrock struct{
-	defaultPorp
-	block.InvisibleBedrock
-}
-
-func (InvisibleBedrock) DFblock() world.Block{
-	return block.InvisibleBedrock{}
-}
-
-type Air struct{
-	defaultPorp
-	block.Air
-}
-func (Air) DFblock() world.Block{
-	return block.Air{}
-}
+type Vines struct{defaultPorp}
+func (Vines) Climbable() bool{return true}

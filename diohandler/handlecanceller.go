@@ -51,7 +51,11 @@ func (dih *DioHandler) registerSessionHandlers(){
 type DioClientPlayerAuthInputHandler struct{}
 func (*DioClientPlayerAuthInputHandler) cancelPacketHandle(pk packet.Packet, p *player.Player) bool{
 	pa := pk.(*packet.PlayerAuthInput)
-	
+	cache := cacheFromPlayer(p)
+	if cache == nil{
+		return false
+	}
+	_ = pa
 	return false
 }
 
