@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/deferio/diohandler/forwarder"
 	"github.com/deferio/diohandler/utils"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/session"
@@ -14,6 +15,7 @@ import (
 
 type dioListener struct{
 	*minecraft.Listener
+	fw *forwarder.Conn
 }
 
 func InterceptPacket(conf server.Config, address string) server.Config{
@@ -35,7 +37,11 @@ func InterceptPacket(conf server.Config, address string) server.Config{
 				return nil, fmt.Errorf("create minecraft listener: %w", err)
 			}
 			conf.Log.Info("Listener running.", "addr", l.Addr())
-			return dioListener{Listener: l}, nil
+			fw, err := forwarder.ForwarderConfig{}.Dial(address)
+			if err != nil {
+				return nil, fmt.Errorf("dio: dial with forwarder: %w", err)
+			}
+			return &dioListener{Listener: l, fw: fw}, nil
 		},
 	}
 	return conf
@@ -43,20 +49,22 @@ func InterceptPacket(conf server.Config, address string) server.Config{
 
 type dioSessionConn struct{
 	session.Conn
-	h *DioHandler
+	h  *DioHandler
+	fw *forwarder.Conn
 }
 
-func (d dioListener) Accept() (session.Conn, error){
+func (d *dioListener) Accept() (session.Conn, error){
 	conn, err := d.Listener.Accept()
 	if err != nil {
 		return nil, err
 	}
 	return &dioSessionConn{
 		Conn: conn.(session.Conn), 
+		fw: d.fw,
 	}, nil
 }
 
-func (d dioListener) Disconnect(conn session.Conn, reason string) error{
+func (d *dioListener) Disconnect(conn session.Conn, reason string) error{
 	if wrapped, ok := conn.(*dioSessionConn); ok {
 		conn = wrapped.Conn
 	}

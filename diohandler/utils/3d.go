@@ -1,9 +1,11 @@
 package utils
 
 import (
+	"iter"
 	"math"
 
 	"github.com/df-mc/dragonfly/server/block/cube"
+	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
 )
@@ -34,18 +36,38 @@ func BBoxOnBBoxFaceWithThreshold(self cube.BBox, face cube.Face, threshold float
 }
 
 func BBoxIntersectsSolid(tx *world.Tx, pBBox cube.BBox) bool{
-	for x := int(math.Floor(pBBox.Min()[0])); x <= int(math.Floor(pBBox.Max()[0])); x++{
-		for y := int(math.Floor(pBBox.Min()[0])); y <= int(math.Floor(pBBox.Max()[0])); y++{
-			for z := int(math.Floor(pBBox.Min()[0])); z <= int(math.Floor(pBBox.Max()[0])); z++{
-				for _, nearby := range BBoxFromWorld(cube.Pos{x, y, z}, tx){
-					if pBBox.IntersectsWith(nearby.Translate(cube.Pos{x, y, z}.Vec3())){
-						return true
+	for nearby := range BBoxesInBBox(tx, pBBox){
+		if pBBox.IntersectsWith(nearby){
+			return true
+		}
+	}
+	return false
+}
+
+func BBoxesInBBox(tx *world.Tx, bb cube.BBox) iter.Seq[cube.BBox]{
+	return func(yield func(cube.BBox) bool) {
+		for pos := range CubePosWithInBBox(bb){
+			for _, nearby := range BBoxFromWorld(pos, tx){
+				if !yield(nearby.Translate(pos.Vec3())){
+					return 
+				}
+			}
+		}
+	}
+}
+
+func CubePosWithInBBox(bb cube.BBox) iter.Seq[cube.Pos]{
+	return func(yield func(cube.Pos) bool) {
+		for x := int(math.Floor(bb.Min()[0])); x <= int(math.Floor(bb.Max()[0])); x++{
+			for y := int(math.Floor(bb.Min()[0])); y <= int(math.Floor(bb.Max()[0])); y++{
+				for z := int(math.Floor(bb.Min()[0])); z <= int(math.Floor(bb.Max()[0])); z++{
+					if !yield(cube.Pos{x, y, z}){
+						return 
 					}
 				}
 			}
 		}
 	}
-	return false
 }
 
 func BBoxFromWorld(pos cube.Pos, tx *world.Tx) []cube.BBox{
@@ -66,4 +88,53 @@ func DirNorm(ro cube.Rotation) mgl64.Vec3{
 	z := math.Cos(yawRad) * math.Cos(pitchRad)
 
 	return mgl64.Vec3{x, y, z}.Normalize()
+}
+
+func FaceOnDeltaAxis(delta mgl64.Vec3, axis int) cube.Face{
+	switch axis{
+	case 0:
+		if delta[axis] > 0{
+			return cube.FaceEast
+		}else{
+			return cube.FaceWest
+		}
+	case 1:
+		if delta[axis] > 0{
+			return cube.FaceUp
+		}else{
+			return cube.FaceDown
+		}
+	default:
+		if delta[axis] > 0{
+			return cube.FaceSouth
+		}else{
+			return cube.FaceNorth
+		}
+	}
+}
+
+func RayTraceFromOrigin(aabb cube.BBox, origin mgl64.Vec3, dir mgl64.Vec3) (mgl64.Vec2, bool){
+	tmin := math.Inf(-1)
+	tmax := math.Inf(1)
+	for axis := range 3{
+		if dir[axis] != 0.0 {
+			tx1 := (aabb.Min()[axis] - origin[axis]) / dir[axis]
+			tx2 := (aabb.Max()[axis] - origin[axis]) / dir[axis]
+			tmin = math.Max(tmin, math.Min(tx1, tx2))
+			tmax = math.Min(tmax, math.Max(tx1, tx2))
+		} else if origin[axis] < aabb.Min()[axis] || origin[axis] > aabb.Max()[axis]{
+			return mgl64.Vec2{}, false
+		}
+	}
+	if tmax >= 0 && tmin <= tmax {
+		if tmin < 0 {
+			return mgl64.Vec2{}, true
+		}
+		return mgl64.Vec2{tmin, tmax}, true
+	}
+	return mgl64.Vec2{}, false
+}
+
+func PlayerBBox(p *player.Player) cube.BBox{
+	return p.H().Type().BBox(p).Translate(p.Position())
 }

@@ -18,13 +18,17 @@ const (
 	SprintMovementMultiplier = 1.3
 	WalkMovementMultiplier   = 1
 	SneakMovementMultiplier  = 0.3
+	CobwebVerticalSpeed      = 0.05
+	CobwebHorizontalSpeed    = 0.2
+	WaterSprintMul           = 0.9
+	WaterDefaultMul          = 0.8
 )
 
 func (in *MovementInput) movementMultiplier() float64 {
 	dirMul := func() float64 {
 		if in.keyOffset() == 45 || in.keyOffset() == -45 {
 			if in.Shift {
-				return math.Sqrt(2) * 0.98
+				return math.Sqrt2 * 0.98
 			}
 			return 1
 		}

@@ -12,10 +12,6 @@ const(
 	ProbeOffset = 0.003
 )
 
-func BBox32FromBBox(bb cube.BBox) cube.BBox32{
-	return Box(Mgl32FromMgl64(bb.Min()), Mgl32FromMgl64(bb.Max()))
-}
-
 func Mgl32FromMgl64(vec mgl64.Vec3) mgl32.Vec3{
 	return mgl32.Vec3{float32(vec[0]), float32(vec[1]), float32(vec[2])}
 }
@@ -28,16 +24,8 @@ func Mgl32FromCubePos(pos cube.Pos) mgl32.Vec3{
 	return mgl32.Vec3{float32(pos[0]), float32(pos[1]), float32(pos[2])}
 }
 
-func Box(min, max mgl32.Vec3) cube.BBox32{
-	return cube.Box32(min[0], min[1], min[2], max[0], max[1], max[2])
-}
-
-func ChunkPosFromMgl32(vec mgl32.Vec3) protocol.ChunkPos{
-	return ChunkPosFromPos(PosFromVec3(vec))
-}
-
-func ChunkPosFromCubePos(pos cube.Pos) protocol.ChunkPos{
-	return protocol.ChunkPos{int32(pos[0]) >> 4, int32(pos[2]) >> 4}
+func Box(min, max mgl64.Vec3) cube.BBox{
+	return cube.Box(min[0], min[1], min[2], max[0], max[1], max[2])
 }
 
 func CubePosFromVec3(vec mgl32.Vec3) cube.Pos{

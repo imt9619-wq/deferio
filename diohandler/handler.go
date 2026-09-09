@@ -1,24 +1,37 @@
 package diohandler
 
 import (
+	"time"
+
+	"github.com/deferio/diohandler/forwarder"
+	"github.com/deferio/diohandler/utils"
 	"github.com/df-mc/dragonfly/server/block/cube"
+	"github.com/df-mc/dragonfly/server/entity"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/df-mc/dragonfly/server/world"
+	"github.com/go-gl/mathgl/mgl64"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
 type DioHandler struct{
 	player.Handler
-	s *session.Session
-	p *playerCache
+	s  *session.Session
+	p  *playerCache
+	fw *forwarder.Conn
 }
+
+const(
+	ReachDist = 3.0
+)
 
 func NewDioHandler(p *player.Player) *DioHandler{
 	dih := &DioHandler{
 		s: p.Data().Session,
 	}
 	conn, ok := SessionDioConn(p.Data().Session)
+	dih.fw = conn.fw
+	dih.fw.IncomingPlayer(p)
 	dih.p = newPlayerCache(p)
 	dih.registerSessionHandlers()
 	if ok{
@@ -66,4 +79,20 @@ func (d *DioHandler) HandleBlockPlace(ctx *player.Context, pos cube.Pos, b world
 		}
 	}
 	d.Handler.HandleBlockPlace(ctx, pos, b)
+}
+
+func (d *DioHandler) HandleHurt(ctx *player.Context, damage *float64, immune bool, attackImmunity *time.Duration, src world.DamageSource){
+	if ent, ok := src.(entity.AttackDamageSource); ok{
+		if nearby, ok := ent.Attacker.(*player.Player); ok{
+			reachDist, ok := utils.RayTraceFromOrigin(
+				utils.PlayerBBox(ctx.Player()).Grow(0.05), 
+				nearby.Position().Add(mgl64.Vec3{0, nearby.EyeHeight()}), 
+				utils.DirNorm(nearby.Rotation()))
+			if !ok || reachDist[0] > ReachDist{
+				ctx.Cancel()
+				return
+			}
+		}
+	}
+	d.Handler.HandleHurt(ctx, damage, immune, attackImmunity, src)
 }
