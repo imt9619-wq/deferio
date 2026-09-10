@@ -2,6 +2,9 @@ package forwarder
 
 import (
 	"time"
+
+	"github.com/sandertv/gophertunnel/minecraft/protocol"
+	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
 const(
@@ -12,36 +15,31 @@ const(
 )
 
 type ForwardPacket interface{
-	ID()     uint16
-	Encode() []byte
-	Source() uint16
+	packet.Packet
+	IsGtPacket() bool
+	Source() uint32
 }
 
+var _ interface{Marshal(IO)} = &PacketWrapper{}
+
 type PacketWrapper struct{
-	ForwardPacket
+	pk ForwardPacket
+	xuid string
 	t time.Time
 }
 
-func (p *PacketWrapper) Encode() []byte{
-	return []byte{}
+func (p *PacketWrapper) Marshal(io IO){
+	p.pk.Marshal(io)
+	io.String(&p.xuid)
+	io.Time(&p.t)
 }
 
 const(
 	IDIncomingPlayerPacket = iota + 1
 )
 
-type IncomingPlayerPacket struct{
-	XUID string
-}
-
-func (i IncomingPlayerPacket) ID() uint16{
-	return IDIncomingPlayerPacket
-}
-
-func (i IncomingPlayerPacket) Encode() []byte{
-	return []byte{}
-}
-
-func (i IncomingPlayerPacket) Source() uint16{
-	return DioHandlerPacket
-}
+type IncomingPlayerPacket struct{}
+func (*IncomingPlayerPacket) ID() uint32{return IDIncomingPlayerPacket}
+func (*IncomingPlayerPacket) Source() uint32{return DioHandlerPacket}
+func (*IncomingPlayerPacket) IsGtPacket() bool{return false}
+func (*IncomingPlayerPacket) Marshal(io protocol.IO){}

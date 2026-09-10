@@ -18,7 +18,7 @@ type DioHandler struct{
 	player.Handler
 	s  *session.Session
 	p  *playerCache
-	fw *forwarder.Conn
+	fw *forwarder.PlayerConn
 }
 
 const(
@@ -30,7 +30,10 @@ func NewDioHandler(p *player.Player) *DioHandler{
 		s: p.Data().Session,
 	}
 	conn, ok := SessionDioConn(p.Data().Session)
-	dih.fw = conn.fw
+	dih.fw = &forwarder.PlayerConn{
+		Conn: conn.fw,
+		XUID: p.XUID(),
+	}
 	dih.fw.IncomingPlayer(p)
 	dih.p = newPlayerCache(p)
 	dih.registerSessionHandlers()
