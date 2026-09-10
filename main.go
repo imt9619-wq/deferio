@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"sync"
 
 	"github.com/deferio/diohandler"
 	"github.com/df-mc/dragonfly/server"
@@ -9,16 +10,29 @@ import (
 	"github.com/df-mc/dragonfly/server/player/chat"
 )
 
-const address = "127.0.0.1:19133"
-
 func main() {
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	go func ()  {
+		deferioHandlerExample()
+		wg.Done()
+	}()
+	go func ()  {
+		deferAntiCheatExample()
+		wg.Done()
+	}()
+}
+
+func deferioHandlerExample(){
+	const address = "127.0.0.1:19133"
+
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	chat.Global.Subscribe(chat.StdoutSubscriber{})
 
 	c := server.DefaultConfig()
 	c.Network.Address = address
 	conf, err := c.Config(slog.Default())
-	diohandler.InterceptPacket(conf, address)
+	conf = diohandler.DioHandlerConfig{}.InterceptPacket(conf, address)
 	
 	if err != nil {
 		panic(err)
@@ -28,10 +42,10 @@ func main() {
 
 	srv.Listen()
 	for p := range srv.Accept() {
-		diohandler.SetPlayerHandler(p, Handler{})
+		diohandler.SetPlayerHandler(p, player.NopHandler{})
 	}
 }
 
-type Handler struct{
-	player.NopHandler
+func deferAntiCheatExample(){
+
 }

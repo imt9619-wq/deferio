@@ -18,7 +18,11 @@ type dioListener struct{
 	fw *forwarder.Conn
 }
 
-func InterceptPacket(conf server.Config, address string) server.Config{
+type DioHandlerConfig struct{
+	ForwarderConf forwarder.ForwarderConfig
+}
+
+func (d DioHandlerConfig) InterceptPacket(conf server.Config, address string) server.Config{
 	conf.Listeners = []func(conf server.Config) (server.Listener, error){
 		func(conf server.Config) (server.Listener, error) {
 			cfg := minecraft.ListenConfig{
@@ -37,8 +41,9 @@ func InterceptPacket(conf server.Config, address string) server.Config{
 				return nil, fmt.Errorf("create minecraft listener: %w", err)
 			}
 			conf.Log.Info("Listener running.", "addr", l.Addr())
-			fw, err := forwarder.ForwarderConfig{}.Dial(address)
+			fw, err := d.ForwarderConf.Dial()
 			if err != nil {
+				l.Close()
 				return nil, fmt.Errorf("dio: dial with forwarder: %w", err)
 			}
 			return &dioListener{Listener: l, fw: fw}, nil

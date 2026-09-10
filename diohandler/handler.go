@@ -1,6 +1,8 @@
 package diohandler
 
 import (
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/deferio/diohandler/forwarder"
@@ -11,6 +13,7 @@ import (
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
+	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
@@ -30,11 +33,16 @@ func NewDioHandler(p *player.Player) *DioHandler{
 		s: p.Data().Session,
 	}
 	conn, ok := SessionDioConn(p.Data().Session)
+	xuid, err := strconv.ParseUint(p.XUID(), 10, 64)
+	if err != nil{
+		panic(fmt.Sprintf("NewDioHandler: Cannot convert XUID from string to uint64 for %s (xuid: %s)", p.Name(), p.XUID()))
+	}
 	dih.fw = &forwarder.PlayerConn{
 		Conn: conn.fw,
-		XUID: p.XUID(),
+		XUID: xuid,
 	}
-	dih.fw.IncomingPlayer(p)
+	dih.fw.SetShieldIDWithGameData(conn.Conn.(*minecraft.Conn).GameData())
+	dih.fw.ForwardPacket(&forwarder.IncomingPlayerPacket{}, forwarder.SourceDioHandlerPacket)
 	dih.p = newPlayerCache(p)
 	dih.registerSessionHandlers()
 	if ok{
