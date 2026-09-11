@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/deferio/diohandler/forwarder"
+	"github.com/deferio/forwarder"
 	"github.com/deferio/diohandler/utils"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/entity"
@@ -41,8 +41,7 @@ func NewDioHandler(p *player.Player) *DioHandler{
 		Conn: conn.fw,
 		XUID: xuid,
 	}
-	dih.fw.SetShieldIDWithGameData(conn.Conn.(*minecraft.Conn).GameData())
-	dih.fw.ForwardPacket(&forwarder.IncomingPlayerPacket{}, forwarder.SourceDioHandlerPacket)
+	dih.fw.NewIncomingPlayer(conn.Conn.(*minecraft.Conn).GameData())
 	dih.p = newPlayerCache(p)
 	dih.registerSessionHandlers()
 	if ok{
@@ -106,4 +105,9 @@ func (d *DioHandler) HandleHurt(ctx *player.Context, damage *float64, immune boo
 		}
 	}
 	d.Handler.HandleHurt(ctx, damage, immune, attackImmunity, src)
+}
+
+func (d *DioHandler) HandleQuit(p *player.Player){
+	d.fw.DisconnectedPlayer()
+	d.Handler.HandleQuit(p)
 }

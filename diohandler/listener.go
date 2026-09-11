@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/deferio/diohandler/forwarder"
+	"github.com/deferio/forwarder"
 	"github.com/deferio/diohandler/utils"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/session"

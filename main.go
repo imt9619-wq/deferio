@@ -13,12 +13,14 @@ import (
 func main() {
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
+	ready := make(chan struct{})
 	go func ()  {
-		deferioHandlerExample()
+		deferAntiCheatExample(ready)
 		wg.Done()
 	}()
+	<-ready
 	go func ()  {
-		deferAntiCheatExample()
+		deferioHandlerExample()
 		wg.Done()
 	}()
 }
@@ -46,6 +48,6 @@ func deferioHandlerExample(){
 	}
 }
 
-func deferAntiCheatExample(){
+func deferAntiCheatExample(startListen chan struct{}){
 
 }
