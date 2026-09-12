@@ -5,19 +5,12 @@ import (
 )
 
 type PlayerConn struct {
-	*Conn
+	*Forwarder
 	XUID uint64
 	id   uint16
 }
 
-func (c *PlayerConn) NewIncomingPlayer(data minecraft.GameData) {
-	c.shieldIDsetOnce.Do(func() {
-		for _, it := range data.Items {
-			if it.Name == "minecraft:shield" {
-				c.shieldID = int32(it.RuntimeID)
-			}
-		}
-	})
+func (c *PlayerConn) NewIncomingPlayer(data minecraft.GameData){
 	c.idMu.Lock()
 	if lenght := len(c.emptyIdSlot); lenght > 0 {
 		id := c.emptyIdSlot[lenght-1]
@@ -29,7 +22,7 @@ func (c *PlayerConn) NewIncomingPlayer(data minecraft.GameData) {
 		c.id = uint16(len(c.idToXuid) - 1)
 	}
 	c.idMu.Unlock()
-	c.ForwardPacket(&IncomingPlayerPacket{
+	pk := &IncomingPlayerPacket{
 		XUID: c.XUID,
 		data: &PlayerGameData{
 			EntityUniqueID: data.EntityUniqueID,
@@ -56,11 +49,13 @@ func (c *PlayerConn) NewIncomingPlayer(data minecraft.GameData) {
 			PropertyData: data.PropertyData,
 			Dimensions: data.Dimensions,
 		},
-	}, SourceDioHandlerPacket)
+	}
+	c.setShieldID(pk)
+	c.ForwardPacket(pk, SourceDeferioPacket)
 }
 
 func (c *PlayerConn) DisconnectedPlayer(){
-	c.ForwardPacket(&DisconnectedPlayerPacket{}, SourceDioHandlerPacket)
+	c.ForwardPacket(&DisconnectedPlayerPacket{}, SourceDeferioPacket)
 	c.idMu.Lock()
 	c.emptyIdSlot = append(c.emptyIdSlot, int(c.id))
 	c.idMu.Unlock()

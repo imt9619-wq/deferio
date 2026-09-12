@@ -1,16 +1,18 @@
 package forwarder
 
 import (
+	"fmt"
+
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/sandertv/gophertunnel/minecraft/nbt"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
+	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
 const(
 	SourceClientPacket = iota + 1
 	SourceServerPacket 
-	SourceDioHandlerPacket
-	SourceDioAntiCheatPacket
+	SourceDeferioPacket
 )
 
 type DioPacket interface{
@@ -33,6 +35,35 @@ const(
 	IDIncomingPlayerPacket 
 	IDDisconnectedPlayerPacket
 )
+
+var (
+	gtClientPool = packet.NewClientPool()
+	gtServerPool = packet.NewServerPool()
+	dioPool      = map[uint32]func() ForwardPacket{
+		IDNewDialPacket:            func() ForwardPacket { return &NewDialPacket{} },
+		IDIncomingPlayerPacket:     func() ForwardPacket { return &IncomingPlayerPacket{data: &PlayerGameData{}} },
+		IDDisconnectedPlayerPacket: func() ForwardPacket { return &DisconnectedPlayerPacket{} },
+	}
+)
+
+func packetByHeader(h *Header) (ForwardPacket, error) {
+	if h.dioPacket {
+		f, ok := dioPool[h.packetID]
+		if !ok {
+			return nil, fmt.Errorf("forwarder: unknown dio packet id %d", h.packetID)
+		}
+		return f(), nil
+	}
+	pool := gtServerPool
+	if h.source == SourceClientPacket {
+		pool = gtClientPool
+	}
+	f, ok := pool[h.packetID]
+	if !ok {
+		return nil, fmt.Errorf("forwarder: unknown gt packet id %d", h.packetID)
+	}
+	return f(), nil
+}
 
 type dioPacket struct{}
 func (dioPacket) DioPacket()

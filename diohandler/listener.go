@@ -15,11 +15,11 @@ import (
 
 type dioListener struct{
 	*minecraft.Listener
-	fw *forwarder.Conn
+	fw *forwarder.Forwarder
 }
 
 type DioHandlerConfig struct{
-	ForwarderConf forwarder.ForwarderConfig
+	forwarder.DialConfig
 }
 
 func (d DioHandlerConfig) InterceptPacket(conf server.Config, address string) server.Config{
@@ -41,7 +41,7 @@ func (d DioHandlerConfig) InterceptPacket(conf server.Config, address string) se
 				return nil, fmt.Errorf("create minecraft listener: %w", err)
 			}
 			conf.Log.Info("Listener running.", "addr", l.Addr())
-			fw, err := d.ForwarderConf.Dial()
+			fw, err := forwarder.ForwarderDial(d.DialConfig)
 			if err != nil {
 				l.Close()
 				return nil, fmt.Errorf("dio: dial with forwarder: %w", err)
@@ -55,7 +55,7 @@ func (d DioHandlerConfig) InterceptPacket(conf server.Config, address string) se
 type dioSessionConn struct{
 	session.Conn
 	h  *DioHandler
-	fw *forwarder.Conn
+	fw *forwarder.Forwarder
 }
 
 func (d *dioListener) Accept() (session.Conn, error){

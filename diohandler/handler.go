@@ -38,7 +38,7 @@ func NewDioHandler(p *player.Player) *DioHandler{
 		panic(fmt.Sprintf("NewDioHandler: Cannot convert XUID from string to uint64 for %s (xuid: %s)", p.Name(), p.XUID()))
 	}
 	dih.fw = &forwarder.PlayerConn{
-		Conn: conn.fw,
+		Forwarder: conn.fw,
 		XUID: xuid,
 	}
 	dih.fw.NewIncomingPlayer(conn.Conn.(*minecraft.Conn).GameData())

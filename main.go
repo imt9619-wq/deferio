@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
 
 	"github.com/deferio/diohandler"
+	"github.com/deferio/forwarder"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/player/chat"
@@ -49,5 +51,18 @@ func deferioHandlerExample(){
 }
 
 func deferAntiCheatExample(startListen chan struct{}){
-
+	l, err := forwarder.ListenerConfig{}.Listen()
+	if err != nil{
+		panic(err)
+	}
+	defer l.Close()
+	close(startListen)
+	for{
+		conn, err := l.Accept()
+		if err != nil{
+			fmt.Printf("Error on accepted Taker: %s\n", err)
+			continue
+		}
+		go conn.HandleClients()
+	}
 }

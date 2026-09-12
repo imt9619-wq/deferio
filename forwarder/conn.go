@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/deferio/diohandler/internel"
@@ -15,48 +17,28 @@ import (
 const(
 	HeaderByteSize = 9
 	PacketLenghtByteSize = 4
-	ServerID = (1 << 15) - 1 
+	ServerID = (1 << 15) - 1
+	maxFrameBytes = 16 << 20
 )
 
 type ForwarderConfig struct{
 	FlushRate       time.Duration
-    ConnF           func(addess string) (net.Conn, error)
     Address         string
     BytePerWrite    int
     MaxBufferedByte int
 }
 
-type Conn struct{
-	net.Conn
-    conf      *ForwarderConfig
-    closeOnce *sync.Once
-    close     chan struct{}
-
-	sendBufMu             *sync.Mutex
-    sendBuf, sendBufSpare [][]byte
-    sendBufLen            int
-	flushNow              chan struct{}
-	
-	done      chan struct{}
-    shieldIDsetOnce *sync.Once
-    shieldID        int32
-
-    idMu        *sync.Mutex
-    emptyIdSlot []int
-    idToXuid    []uint64
+type DialConfig struct{
+	ForwarderConfig
+	DialF func(address string) (net.Conn, error)
 }
 
-func (f ForwarderConfig) Dial() (*Conn, error){
+func (f ForwarderConfig) defaultForwarderConfig() ForwarderConfig{
 	if f.FlushRate == 0{
 		f.FlushRate = time.Millisecond * 50
 	}
 	if f.Address == ""{
 		f.Address = "127.0.0.1:19135"
-	}
-	if f.ConnF == nil{
-		f.ConnF = func(addess string) (net.Conn, error){
-			return net.Dial("tcp", addess)
-		}
 	}
 	if f.BytePerWrite == 0{
 		f.BytePerWrite = 16 * 1024
@@ -64,10 +46,44 @@ func (f ForwarderConfig) Dial() (*Conn, error){
 	if f.MaxBufferedByte == 0{
 		f.MaxBufferedByte = 4 * f.BytePerWrite
 	}
-	conn, err := f.ConnF(f.Address)
+	return f
+}
+
+type Conn struct{
+	net.Conn
+    conf      *ForwarderConfig
+    closeOnce *sync.Once
+    close     chan struct{}
+	done      chan struct{}
+
+	sendBufMu             *sync.Mutex
+    sendBuf, sendBufSpare [][]byte
+	sendBufLen            int
+	flushNow              chan struct{}
+
+	readBuf     []byte
+    shieldID    *atomic.Int32
+    shieldIDSet *atomic.Bool
+}
+
+func (d DialConfig) dial() (*Conn, error){
+	if d.Address == ""{
+		d.Address = "127.0.0.1:19135"
+	}
+	if d.DialF == nil{
+		d.DialF = func(address string) (net.Conn, error){
+			return net.Dial("unix", address)
+		}
+	}
+	d.ForwarderConfig = d.defaultForwarderConfig()
+	conn, err := d.DialF(d.Address)
 	if err != nil{
 		return nil, fmt.Errorf("Forwarder: Failed to dial: %v", err)
 	}
+	return d.newConn(conn), nil
+}
+
+func (f ForwarderConfig) newConn(conn net.Conn) *Conn{
 	c := &Conn{
 		Conn: conn,
 		conf: &f,
@@ -77,18 +93,15 @@ func (f ForwarderConfig) Dial() (*Conn, error){
 		sendBuf: make([][]byte, 0, 4096),
 		sendBufSpare: make([][]byte, 0, 4096),
 		flushNow: make(chan struct{}, 1),
-		shieldIDsetOnce: &sync.Once{},
-		idMu: &sync.Mutex{},
-		emptyIdSlot: make([]int, 0, 128),
-		idToXuid: make([]uint64, 0, 128),
 		done: make(chan struct{}),
+		shieldID: &atomic.Int32{},
+		shieldIDSet: &atomic.Bool{},
 	}
 	go c.flushLoop()
-	c.forwardPacket(&NewDialPacket{serverTime: time.Now().Unix()}, ServerID, SourceDioHandlerPacket)
-	return c, nil
+	return c
 }
 
-func (c *Conn) Close() error {
+func (c *Conn) Close() error{
 	c.closeOnce.Do(func(){
 		close(c.close)
 	})
@@ -147,9 +160,9 @@ func (c *Conn) writePacket(pk *PacketWrapper) error{
 		return err
 	}
 
-	pk.pk.Marshal(protocol.NewWriter(buf, c.shieldID))
+	pk.pk.Marshal(protocol.NewWriter(buf, c.shieldID.Load()))
 	raw := make([]byte, PacketLenghtByteSize, PacketLenghtByteSize+len(buf.Bytes()))
-	binary.BigEndian.PutUint32(raw[0:4], uint32(len(buf.Bytes())))
+	binary.BigEndian.PutUint32(raw[0:PacketLenghtByteSize], uint32(len(buf.Bytes())))
 	frame := append(raw, buf.Bytes()...)
 
 	c.sendBufMu.Lock()
@@ -213,22 +226,57 @@ func (c *Conn) Flush() error{
 	return nil
 }
 
-func (c *Conn) forwardPacket(pk ForwardPacket, id uint16, source uint8) error{
-	hdr := Header{
-		id:         id,
-		timeOffset: TimeSinceToday(),
-		packetID:   pk.ID(),
-		source:     source,
-	}
-	_, ok := pk.(DioPacket)
-	hdr.dioPacket = ok
-	return c.writePacket(&PacketWrapper{
-		pk:  pk,
-		hdr: &hdr,
-	})
+func (c *Conn) forwardPacket(pk *PacketWrapper, id uint16, source uint8) error{
+	pk.hdr.id = id
+	pk.hdr.packetID = pk.pk.ID()
+	pk.hdr.source = source
+	_, ok := pk.pk.(DioPacket)
+	pk.hdr.dioPacket = ok
+	return c.writePacket(pk)
 }
 
-func TimeSinceToday() time.Duration {
-	now := time.Now().UTC()
-	return now.Sub(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC))
+func (c *Conn) readPacket() (*PacketWrapper, error){
+	var lenBuf [PacketLenghtByteSize]byte
+	if _, err := io.ReadFull(c.Conn, lenBuf[:]); err != nil{
+		return nil, err
+	}
+	n := int(binary.BigEndian.Uint32(lenBuf[:]))
+	if n < HeaderByteSize || n > maxFrameBytes{
+		return nil, fmt.Errorf("forwarder: bad frame length %d", n)
+	}
+	if cap(c.readBuf) < n{
+		c.readBuf = make([]byte, n)
+	}else{
+		c.readBuf = c.readBuf[:n]
+	}
+	if _, err := io.ReadFull(c.Conn, c.readBuf); err != nil{
+		return nil, err
+	}
+
+	body := bytes.NewBuffer(c.readBuf)
+	hdr := &Header{}
+	if err := hdr.Read(body); err != nil{
+		return nil, err
+	}
+	pk, err := packetByHeader(hdr)
+	if err != nil{
+		return nil, err
+	}
+	pk.Marshal(protocol.NewReader(body, c.shieldID.Load(), false))
+	return &PacketWrapper{pk: pk, hdr: hdr}, nil
+}
+
+func (c *Conn) setShieldID(pk *IncomingPlayerPacket){
+	if c.shieldIDSet.Load(){
+		return
+	}
+	if pk.data != nil{
+		for _, it := range pk.data.Items{
+			if it.Name == "minecraft:shield"{
+				c.shieldID.Store(int32(it.RuntimeID))
+				c.shieldIDSet.Store(true)
+				return
+			}
+		}
+	}
 }
