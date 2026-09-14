@@ -6,22 +6,30 @@ import (
 
 type PlayerConn struct {
 	*Forwarder
-	XUID uint64
-	id   uint16
+    XUID        uint64
+    id          uint16
+    data        *minecraft.GameData
 }
 
 func (c *PlayerConn) NewIncomingPlayer(data minecraft.GameData){
+	dataCopy := data
+	c.data = &dataCopy
 	c.idMu.Lock()
-	if lenght := len(c.emptyIdSlot); lenght > 0 {
+	if lenght := len(c.emptyIdSlot); lenght > 0{
 		id := c.emptyIdSlot[lenght-1]
 		c.emptyIdSlot = c.emptyIdSlot[:lenght-1]
-		c.idToXuid[id] = c.XUID
+		c.idToPconn[id] = c
 		c.id = uint16(id)
-	} else {
-		c.idToXuid = append(c.idToXuid, c.XUID)
-		c.id = uint16(len(c.idToXuid) - 1)
+	} else{
+		c.idToPconn = append(c.idToPconn, c)
+		c.id = uint16(len(c.idToPconn) - 1)
 	}
 	c.idMu.Unlock()
+	c.sendIncPlayer()
+}
+
+func (c *PlayerConn) sendIncPlayer(){
+	data := c.data
 	pk := &IncomingPlayerPacket{
 		XUID: c.XUID,
 		data: &PlayerGameData{
@@ -58,9 +66,10 @@ func (c *PlayerConn) DisconnectedPlayer(){
 	c.ForwardPacket(&DisconnectedPlayerPacket{}, SourceDeferioPacket)
 	c.idMu.Lock()
 	c.emptyIdSlot = append(c.emptyIdSlot, int(c.id))
+	c.idToPconn[c.id] = nil
 	c.idMu.Unlock()
 }
 
-func (c *PlayerConn) ForwardPacket(pk ForwardPacket, source uint8) error {
+func (c *PlayerConn) ForwardPacket(pk ForwardPacket, source uint8) error{
 	return c.forwardPacket(pk, c.id, source)
 }

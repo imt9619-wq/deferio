@@ -50,7 +50,3 @@ func (h *Header) Read(r io.Reader) error{
 	
 	return nil
 }
-
-func TimeTodayMidnight(now time.Time) time.Time{
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-}

@@ -34,6 +34,7 @@ const(
 	IDNewDialPacket = iota + 1
 	IDIncomingPlayerPacket 
 	IDDisconnectedPlayerPacket
+    IDMovementSimResult
 )
 
 var (
@@ -41,8 +42,9 @@ var (
 	gtServerPool = packet.NewServerPool()
 	dioPool      = map[uint32]func() ForwardPacket{
 		IDNewDialPacket:            func() ForwardPacket { return &NewDialPacket{} },
-		IDIncomingPlayerPacket:     func() ForwardPacket { return &IncomingPlayerPacket{data: &PlayerGameData{}} },
+		IDIncomingPlayerPacket:     func() ForwardPacket { return &IncomingPlayerPacket{data: &PlayerGameData{PropertyData: map[string]any{}}} },
 		IDDisconnectedPlayerPacket: func() ForwardPacket { return &DisconnectedPlayerPacket{} },
+        IDMovementSimResult:        func() ForwardPacket { return &MovementSimResult{Origial: &packet.PlayerAuthInput{}} },
 	}
 )
 
@@ -66,15 +68,17 @@ func packetByHeader(h *Header) (ForwardPacket, error) {
 }
 
 type dioPacket struct{}
-func (dioPacket) DioPacket()
+func (dioPacket) DioPacket() {}
 
 type NewDialPacket struct{
 	dioPacket
 	serverTime int64
+    serverAddr string
 }
 func (*NewDialPacket) ID() uint32{return IDNewDialPacket}
 func (n *NewDialPacket) Marshal(io protocol.IO){
 	io.Int64(&n.serverTime)
+    io.String(&n.serverAddr)
 }
 
 type PlayerGameData struct{
@@ -142,3 +146,13 @@ func (i *IncomingPlayerPacket) Marshal(io protocol.IO){
 type DisconnectedPlayerPacket struct{dioPacket}
 func (*DisconnectedPlayerPacket) ID() uint32{return IDDisconnectedPlayerPacket}
 func (*DisconnectedPlayerPacket) Marshal(io protocol.IO){}
+
+type MovementSimResult struct{
+    dioPacket
+    // TODO add related fields
+    Origial *packet.PlayerAuthInput
+}
+func (*MovementSimResult) ID() uint32{return IDMovementSimResult}
+func (r *MovementSimResult) Marshal(io protocol.IO){
+    r.Origial.Marshal(io)
+}

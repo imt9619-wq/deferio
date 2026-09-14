@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/deferio/forwarder"
 	"github.com/deferio/diohandler/utils"
@@ -41,11 +42,7 @@ func (d DioHandlerConfig) InterceptPacket(conf server.Config, address string) se
 				return nil, fmt.Errorf("create minecraft listener: %w", err)
 			}
 			conf.Log.Info("Listener running.", "addr", l.Addr())
-			fw, err := forwarder.ForwarderDial(d.DialConfig)
-			if err != nil {
-				l.Close()
-				return nil, fmt.Errorf("dio: dial with forwarder: %w", err)
-			}
+			fw := forwarder.ForwarderConfig{DialConfig: d.DialConfig, ServerAddr: address}.DialTilDone(0, 30*time.Second)
 			return &dioListener{Listener: l, fw: fw}, nil
 		},
 	}

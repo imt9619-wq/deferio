@@ -5,12 +5,15 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/deferio/diohandler/internel"
+	"github.com/deferio/internel"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
 )
 
@@ -21,24 +24,27 @@ const(
 	maxFrameBytes = 16 << 20
 )
 
-type ForwarderConfig struct{
+type ForwarderConnConfig struct{
 	FlushRate       time.Duration
     Address         string
     BytePerWrite    int
     MaxBufferedByte int
+	Log             slog.Logger
+	// will be called when Conn is closed
+	fallback        func()
 }
 
 type DialConfig struct{
-	ForwarderConfig
+	ForwarderConnConfig
 	DialF func(address string) (net.Conn, error)
 }
 
-func (f ForwarderConfig) defaultForwarderConfig() ForwarderConfig{
+func (f ForwarderConnConfig) defaultForwarderConnConfig() ForwarderConnConfig{
 	if f.FlushRate == 0{
 		f.FlushRate = time.Millisecond * 50
 	}
 	if f.Address == ""{
-		f.Address = "127.0.0.1:19135"
+		f.Address = filepath.Join(os.TempDir(), "deferio_anticheat_server.sock")
 	}
 	if f.BytePerWrite == 0{
 		f.BytePerWrite = 16 * 1024
@@ -51,10 +57,13 @@ func (f ForwarderConfig) defaultForwarderConfig() ForwarderConfig{
 
 type Conn struct{
 	net.Conn
-    conf      *ForwarderConfig
+    conf      ForwarderConnConfig
     closeOnce *sync.Once
+    fallbackOnce *sync.Once
     close     chan struct{}
 	done      chan struct{}
+	skipFallback *atomic.Bool
+	loopStarted  *atomic.Bool
 
 	sendBufMu             *sync.Mutex
     sendBuf, sendBufSpare [][]byte
@@ -66,16 +75,18 @@ type Conn struct{
     shieldIDSet *atomic.Bool
 }
 
-func (d DialConfig) dial() (*Conn, error){
-	if d.Address == ""{
-		d.Address = "127.0.0.1:19135"
-	}
+func (d DialConfig) defaultDialConfig() DialConfig{
 	if d.DialF == nil{
 		d.DialF = func(address string) (net.Conn, error){
 			return net.Dial("unix", address)
 		}
 	}
-	d.ForwarderConfig = d.defaultForwarderConfig()
+	d.ForwarderConnConfig = d.defaultForwarderConnConfig()
+	return d
+}
+
+func (d DialConfig) dial() (*Conn, error){
+	d = d.defaultDialConfig()
 	conn, err := d.DialF(d.Address)
 	if err != nil{
 		return nil, fmt.Errorf("Forwarder: Failed to dial: %v", err)
@@ -83,42 +94,91 @@ func (d DialConfig) dial() (*Conn, error){
 	return d.newConn(conn), nil
 }
 
-func (f ForwarderConfig) newConn(conn net.Conn) *Conn{
-	c := &Conn{
-		Conn: conn,
-		conf: &f,
+func (f ForwarderConnConfig) getEmptyConn() *Conn{
+	return &Conn{
+		conf: f,
 		closeOnce: &sync.Once{},
+		fallbackOnce: &sync.Once{},
 		close: make(chan struct{}),
 		sendBufMu: &sync.Mutex{},
 		sendBuf: make([][]byte, 0, 4096),
 		sendBufSpare: make([][]byte, 0, 4096),
 		flushNow: make(chan struct{}, 1),
 		done: make(chan struct{}),
+		skipFallback: &atomic.Bool{},
+		loopStarted: &atomic.Bool{},
 		shieldID: &atomic.Int32{},
 		shieldIDSet: &atomic.Bool{},
 	}
+}
+
+func (f ForwarderConnConfig) newConn(conn net.Conn) *Conn{
+	c := f.getEmptyConn()
+	c.Conn = conn
+	c.loopStarted.Store(true)
 	go c.flushLoop()
 	return c
 }
 
+func (c *Conn) reset(){
+	c.closeOnce = &sync.Once{}
+	c.fallbackOnce = &sync.Once{}
+	c.close = make(chan struct{})
+	c.done = make(chan struct{})
+	c.skipFallback.Store(false)
+	c.loopStarted.Store(false)
+	c.sendBufMu.Lock()
+	c.sendBuf = c.sendBuf[:0]
+	c.sendBufLen = 0
+	c.sendBufMu.Unlock()
+}
+
 func (c *Conn) Close() error{
+	return c.closeConn(true)
+}
+
+func (c *Conn) closeConn(retry bool) error{
+	if !retry{
+		c.skipFallback.Store(true)
+	}
 	c.closeOnce.Do(func(){
 		close(c.close)
 	})
-	<-c.done
+	if c.loopStarted.Load(){
+		<-c.done
+	}
+	if !c.skipFallback.Load(){
+		c.runFallback()
+	}
 	return nil
+}
+
+func (c *Conn) runFallback(){
+	if c.conf.fallback == nil{
+		return
+	}
+	c.fallbackOnce.Do(func(){
+		go c.conf.fallback()
+	})
 }
 
 func (c *Conn) flushLoop(){
 	ticker := time.NewTicker(c.conf.FlushRate)
 	lastWrite := time.Now()
 	defer ticker.Stop()
-	defer close(c.done)
+	defer func(){
+		close(c.done)
+		if !c.skipFallback.Load(){
+			c.runFallback()
+		}
+	}()
 	for{
 		select{
 		case <-c.close:
 			_ = c.Flush()
-			_ = c.Conn.Close()
+			if c.Conn != nil{
+				_ = c.Conn.Close()
+			}
 			return
 		case t := <-ticker.C:
 			if t.Before(lastWrite.Add(c.conf.FlushRate)){
@@ -126,7 +186,9 @@ func (c *Conn) flushLoop(){
 			}
 			if err := c.Flush(); err != nil{
 				c.closeOnce.Do(func(){close(c.close)})
-				_ = c.Conn.Close()
+				if c.Conn != nil{
+					_ = c.Conn.Close()
+				}
 				return
 			}
 			lastWrite = time.Now()
@@ -134,7 +196,9 @@ func (c *Conn) flushLoop(){
 		case <-c.flushNow:
 			if err := c.Flush(); err != nil{
 				c.closeOnce.Do(func(){close(c.close)})
-				_ = c.Conn.Close()
+				if c.Conn != nil{
+					_ = c.Conn.Close()
+				}
 				return
 			}
 			lastWrite = time.Now()
@@ -143,42 +207,65 @@ func (c *Conn) flushLoop(){
 }
 
 func (c *Conn) writePacket(pk *PacketWrapper) error{
-	select {
+	select{
 	case <-c.close:
 		return fmt.Errorf("Forwarder Conn: trying to write packet on closed Conn")
 	default:
 	}
 
 	buf := internal.BufferPool.Get().(*bytes.Buffer)
-	defer func() {
+	defer func(){
 		buf.Reset()
 		internal.BufferPool.Put(buf)
 	}()
 	buf.Reset()
-	err := pk.hdr.Write(buf)
-	if err != nil{
+	if err := pk.hdr.Write(buf); err != nil{
+		return err
+	}
+	if err := c.encodePacket(pk.pk, buf); err != nil{
 		return err
 	}
 
-	pk.pk.Marshal(protocol.NewWriter(buf, c.shieldID.Load()))
 	raw := make([]byte, PacketLenghtByteSize, PacketLenghtByteSize+len(buf.Bytes()))
-	binary.BigEndian.PutUint32(raw[0:PacketLenghtByteSize], uint32(len(buf.Bytes())))
+	binary.BigEndian.PutUint32(raw[:PacketLenghtByteSize], uint32(len(buf.Bytes())))
 	frame := append(raw, buf.Bytes()...)
-
 	c.sendBufMu.Lock()
+
+	select{
+	case <-c.close:
+		c.sendBufMu.Unlock()
+		return fmt.Errorf("Forwarder Conn: trying to write packet on closed Conn")
+	default:
+	}
+
 	c.sendBuf = append(c.sendBuf, frame)
 	c.sendBufLen += len(frame)
 	flushNow := c.sendBufLen >= c.conf.MaxBufferedByte
 	c.sendBufMu.Unlock()
 
 	if flushNow{
-		select {
+		select{
 		case c.flushNow <- struct{}{}:
 		default:
 		}
 	}
 	return nil
-} 
+}
+
+type encodeError struct{error}
+func (c *Conn) encodePacket(pk ForwardPacket, buf *bytes.Buffer) (err error){
+	defer func(){
+		if r := recover(); r != nil{
+			if e, ok := r.(error); ok{
+				err = encodeError{fmt.Errorf("encode packet %T: %w", pk, e)}
+			}else{
+				err = encodeError{fmt.Errorf("encode packet %T: %v", pk, r)}
+			}
+		}
+	}()
+	pk.Marshal(protocol.NewWriter(buf, c.shieldID.Load()))
+	return nil
+}
 
 // most copied from gophertunnel/minecraft.(*Conn).Flush()
 func (c *Conn) Flush() error{
@@ -249,11 +336,12 @@ func (c *Conn) readPacket() (*PacketWrapper, error){
 	}else{
 		c.readBuf = c.readBuf[:n]
 	}
-	if _, err := io.ReadFull(c.Conn, c.readBuf); err != nil{
+	if _, err := io.ReadFull(c.Conn, c.readBuf); err != nil {
 		return nil, err
 	}
-
-	body := bytes.NewBuffer(c.readBuf)
+	new := make([]byte, n)
+	copy(new, c.readBuf)
+	body := bytes.NewBuffer(new)
 	hdr := &Header{}
 	if err := hdr.Read(body); err != nil{
 		return nil, err
@@ -262,8 +350,25 @@ func (c *Conn) readPacket() (*PacketWrapper, error){
 	if err != nil{
 		return nil, err
 	}
-	pk.Marshal(protocol.NewReader(body, c.shieldID.Load(), false))
+	if err := c.decodePacket(pk, body); err != nil{
+		return nil, err
+	}
 	return &PacketWrapper{pk: pk, hdr: hdr}, nil
+}
+
+type decodeError struct{error}
+func (c *Conn) decodePacket(pk ForwardPacket, body *bytes.Buffer) (err error){
+	defer func(){
+		if r := recover(); r != nil {
+			if e, ok := r.(error); ok{
+				err = decodeError{fmt.Errorf("Decode packet %T: %w", pk, e)}
+			}else{
+				err = decodeError{fmt.Errorf("Decode packet %T: %v", pk, r)}
+			}
+		}
+	}()
+	pk.Marshal(protocol.NewReader(body, c.shieldID.Load(), false))
+	return nil
 }
 
 func (c *Conn) setShieldID(pk *IncomingPlayerPacket){

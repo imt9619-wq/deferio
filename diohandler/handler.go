@@ -33,6 +33,9 @@ func NewDioHandler(p *player.Player) *DioHandler{
 		s: p.Data().Session,
 	}
 	conn, ok := SessionDioConn(p.Data().Session)
+	if !ok{
+		panic("NewDioHandler: session conn is not *dioSessionConn")
+	}
 	xuid, err := strconv.ParseUint(p.XUID(), 10, 64)
 	if err != nil{
 		panic(fmt.Sprintf("NewDioHandler: Cannot convert XUID from string to uint64 for %s (xuid: %s)", p.Name(), p.XUID()))

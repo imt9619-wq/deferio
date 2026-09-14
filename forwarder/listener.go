@@ -3,31 +3,33 @@ package forwarder
 import (
 	"fmt"
 	"net"
+	"os"
 	"sync"
+	"sync/atomic"
 )
 
 type ListenerConfig struct{
-	ForwarderConfig
-	ListenerF       func(address string) (net.Listener, error)
-	newPh NewPlayerHandler
+	ForwarderConnConfig
+	ListenerF func(address string) (net.Listener, error)
 }
 
 type Listener struct{
 	net.Listener
     closeOnce *sync.Once
-    conf      ForwarderConfig
+    conf      ForwarderConnConfig
     connMu    *sync.Mutex
     conns     []*Conn
-	newPh     NewPlayerHandler
+	inc       chan func()(*Taker, error)
 }
 
 func (conf ListenerConfig) Listen() (*Listener, error){
 	if conf.ListenerF == nil{
 		conf.ListenerF = func(address string) (net.Listener, error){
+			os.Remove(address)
 			return net.Listen("unix", address)
 		}
 	}
-	conf.ForwarderConfig = conf.defaultForwarderConfig()
+	conf.ForwarderConnConfig = conf.defaultForwarderConnConfig()
 	l, err := conf.ListenerF(conf.Address)
 	if err != nil{
 		return nil, fmt.Errorf("FwListener: Failed to listen: %v", err)
@@ -36,13 +38,14 @@ func (conf ListenerConfig) Listen() (*Listener, error){
 		Listener: l,
 		closeOnce: &sync.Once{},
 		connMu: &sync.Mutex{},
+		conf: conf.ForwarderConnConfig,
 		conns: make([]*Conn, 0, 4),
-		newPh: conf.newPh,
+		inc: make(chan func() (*Taker, error), 4),
 	}
 	return fwL, nil
 }
 
-func (l *Listener) Accept() (*Taker, error){
+func (l *Listener) accept() (*Taker, error){
 	c, err := l.Accept()
 	if err != nil{
 		return nil, err
@@ -55,9 +58,12 @@ func (l *Listener) Accept() (*Taker, error){
 		Conn: conn,
 		idToPlayerRmu: &sync.RWMutex{},
 		idToPlayer: make(map[uint16]*ACplayerConn, 128),
-		ph: l.newPh,
+		inc: make(chan *ACplayerConn),
+		expects: make(chan Header, 10),
+		serverAddr: &atomic.Value{},
 	}
-	return t, err
+	t.expect(Header{packetID: IDNewDialPacket, id: ServerID, dioPacket: true})
+	return t, nil
 }
 
 func (l *Listener) Close(){
@@ -69,4 +75,19 @@ func (l *Listener) Close(){
 		l.connMu.Unlock()
 		l.Listener.Close()
 	})
+}
+
+func (l *Listener) IncomingClients() chan func()(*Taker, error){
+	return l.inc
+}
+
+func (l *Listener) StartHandleClients(){
+	for{
+		conn, err := l.accept()
+		l.inc <- func() (*Taker, error){return conn, err}
+		if err != nil{
+			l.conf.Log.Error(fmt.Sprintf("Return on error: %s", err), "Listener", "StartHandleClients")
+			return
+		}
+	}
 }

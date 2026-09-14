@@ -1,12 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
 	"sync"
 
+	"github.com/deferio/dioanticheat"
 	"github.com/deferio/diohandler"
-	"github.com/deferio/forwarder"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/player/chat"
@@ -16,15 +15,16 @@ func main() {
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	ready := make(chan struct{})
-	go func ()  {
+	go func(){
 		deferAntiCheatExample(ready)
 		wg.Done()
 	}()
 	<-ready
-	go func ()  {
+	go func(){
 		deferioHandlerExample()
 		wg.Done()
 	}()
+	wg.Wait()
 }
 
 func deferioHandlerExample(){
@@ -51,18 +51,10 @@ func deferioHandlerExample(){
 }
 
 func deferAntiCheatExample(startListen chan struct{}){
-	l, err := forwarder.ListenerConfig{}.Listen()
+	a, err := dioanticheat.DioAntiCheatConfig{}.StartAntiCheatServer()
 	if err != nil{
 		panic(err)
 	}
-	defer l.Close()
 	close(startListen)
-	for{
-		conn, err := l.Accept()
-		if err != nil{
-			fmt.Printf("Error on accepted Taker: %s\n", err)
-			continue
-		}
-		go conn.HandleClients()
-	}
+	a.WaitTilProgramEnd()
 }

@@ -1,20 +1,16 @@
 package forwarder
 
 import (
+	"iter"
 	"sync"
-	"sync/atomic"
 	"time"
-
-	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
 type ACplayerConn struct{
 	id   uint16
-	XUID uint64
-	Data *PlayerGameData
+	xuid uint64
+	data *PlayerGameData
 	pkStream chan PacketResult
-	hSetted *atomic.Bool
-	h    ACplayerConnHandler
 	close chan struct{}
 	closeOnce *sync.Once
 }
@@ -22,51 +18,57 @@ type ACplayerConn struct{
 type PacketResult struct{
 	Source uint8
     T      time.Time
-    Packet packet.Packet
-}
-
-type ACplayerConnHandler interface {
-	HandlePacket(pk PacketResult)
+    Packet ForwardPacket
 }
 
 func newAcPlayerConn(p *PacketWrapper) *ACplayerConn{
 	pk := p.pk.(*IncomingPlayerPacket)
 	a := &ACplayerConn{
 		id: p.hdr.id,
-		XUID: pk.XUID,
-		Data: pk.data,
-		pkStream: make(chan PacketResult, 64),
-		hSetted: &atomic.Bool{},
+		xuid: pk.XUID,
+		data: pk.data,
+		pkStream: make(chan PacketResult, 32),
 		close: make(chan struct{}),
 		closeOnce: &sync.Once{},
 	}
 	return a
 }
 
-func (p *ACplayerConn) acPlayerHandlerPacketLoop(){
-	for{
-		select{
-		case <-p.close:
-			return
-		case pk := <-p.pkStream:
-			p.h.HandlePacket(pk)
+func (p *ACplayerConn) sendPacketToPlayer(pk PacketResult){
+	select{
+	case <-p.close:
+		return
+	case p.pkStream <- pk:
+	default:
+	}
+}
+
+func (p *ACplayerConn) ReadPacketTilDisconnect() iter.Seq[PacketResult]{
+	return func(yield func(PacketResult) bool) {
+		for{
+			select{
+			case <-p.close:
+				return
+			case pk, ok := <-p.pkStream:
+				if !ok || !yield(pk){
+					p.Close()
+					return
+				}
+			}
 		}
 	}
 }
 
-func (p *ACplayerConn) SetHandlerOnce(h ACplayerConnHandler){
-	if p.hSetted.Load(){
-		panic("Trying to ACplayerConn Handler twice")
-	}
-	p.h = h
-	p.hSetted.Store(true)
-	go p.acPlayerHandlerPacketLoop()
+func (p *ACplayerConn) Close(){
+	p.closeOnce.Do(func() {
+		close(p.close)
+	})
 }
 
-func (p *ACplayerConn) sendPacketToPlayer(pk PacketResult){
-	select{
-	case p.pkStream <- pk:
-	default:
-		panic("ACplayerConn Handler isn't set")
-	}
+func (p *ACplayerConn) XUID() uint64{
+	return p.xuid
+}
+
+func (p *ACplayerConn) GameData() *PlayerGameData{
+	return p.data
 }
