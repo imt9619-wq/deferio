@@ -5,10 +5,14 @@ import (
 	"github.com/df-mc/dragonfly/server/world"
 )
 
+const(
+	BlockDefaultSlipperiness = 0.6
+)
+
 type Block interface {
 	Climbable() bool
 	DFblock()   world.Block
-	Friction()  float64
+	Slipperiness() float64
 }
 
 func DFblockToBlock(b world.Block) Block{
@@ -25,11 +29,11 @@ func DFblockToBlock(b world.Block) Block{
 type defaultPorp struct{world.Block}
 func (defaultPorp) Climbable() bool{return false}
 func (dp defaultPorp) DFblock() world.Block{return dp.Block}
-func (dp defaultPorp) Friction() float64{
+func (dp defaultPorp) Slipperiness() float64{
 	if bl, ok := dp.Block.(interface{Friction() float64}); ok{
 		return bl.Friction()
 	}
-	return 0.6
+	return BlockDefaultSlipperiness
 }
 
 type Ladder struct{defaultPorp}

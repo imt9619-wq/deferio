@@ -24,7 +24,7 @@ type dioHandleSetActorMotion struct{}
 func (dioHandleSetActorMotion) HandlePacket(p packet.Packet, dih *DioHandler){
 	pk := p.(*packet.SetActorMotion)
 	if pk.EntityRuntimeID == selfEntityID{
-		dih.p.serverInpause.set(pk.Tick, utils.Mgl64FromMgl32(pk.Velocity))
+		dih.p.serverInpause.Set(pk.Tick, utils.Mgl64FromMgl32(pk.Velocity))
 	}
 }
 
@@ -32,6 +32,6 @@ type dioHandleMovePlayer struct{}
 func (dioHandleMovePlayer) HandlePacket(p packet.Packet, dih *DioHandler){
 	pk := p.(*packet.MovePlayer)
 	if pk.EntityRuntimeID == selfEntityID{
-		dih.p.serverReset.set(pk.Tick, pk)
+		dih.p.serverReset.Set(pk.Tick, pk)
 	}
 }

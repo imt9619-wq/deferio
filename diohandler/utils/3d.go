@@ -59,8 +59,8 @@ func BBoxesInBBox(tx *world.Tx, bb cube.BBox) iter.Seq[cube.BBox]{
 func CubePosWithInBBox(bb cube.BBox) iter.Seq[cube.Pos]{
 	return func(yield func(cube.Pos) bool) {
 		for x := int(math.Floor(bb.Min()[0])); x <= int(math.Floor(bb.Max()[0])); x++{
-			for y := int(math.Floor(bb.Min()[0])); y <= int(math.Floor(bb.Max()[0])); y++{
-				for z := int(math.Floor(bb.Min()[0])); z <= int(math.Floor(bb.Max()[0])); z++{
+			for y := int(math.Floor(bb.Min()[2])); y <= int(math.Floor(bb.Max()[1])); y++{
+				for z := int(math.Floor(bb.Min()[2])); z <= int(math.Floor(bb.Max()[2])); z++{
 					if !yield(cube.Pos{x, y, z}){
 						return 
 					}
@@ -137,4 +137,9 @@ func RayTraceFromOrigin(aabb cube.BBox, origin mgl64.Vec3, dir mgl64.Vec3) (mgl6
 
 func PlayerBBox(p *player.Player) cube.BBox{
 	return p.H().Type().BBox(p).Translate(p.Position())
+}
+
+func PosBound(pos cube.Pos) cube.BBox{
+	v := pos.Vec3()
+	return cube.Box(v[0], v[1], v[2], v[0]+1, v[1]+1, v[2]+1)
 }

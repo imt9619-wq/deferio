@@ -25,14 +25,41 @@ type Forwarder struct {
 type ForwarderConfig struct{
 	DialConfig
 	ServerAddr string
+    ShouldRedial  bool
+    Redialretrys   int
+    RedialIntervel time.Duration
 }
 
-func (conf ForwarderConfig) DialTilDone(retrys int, period time.Duration) *Forwarder{
-	if period == 0{
-		period = time.Second * 30
+func (conf ForwarderConfig) defaultForwarderConfig() ForwarderConfig{
+	if conf.ShouldRedial && conf.RedialIntervel == 0{
+		conf.RedialIntervel = 30 * time.Second
 	}
 	conf.DialConfig = conf.DialConfig.defaultDialConfig()
+	return conf
+}
 
+func (conf ForwarderConfig) Dial() (*Forwarder, error){
+	conf = conf.defaultForwarderConfig()
+	if !conf.ShouldRedial{
+		conn, err := conf.DialConfig.dial()
+		if err != nil{
+			return nil, err
+		}
+		fw := &Forwarder{
+			Conn: conn,
+			idMu: &sync.Mutex{},
+			emptyIdSlot: make([]int, 0, 128),
+			idToPconn: make([]*PlayerConn, 0, 32),
+			timePoint: time.Now(),
+			serverAddr: conf.ServerAddr,
+			isConnDown: &atomic.Bool{},
+		}	
+		if err = fw.ondial(); err != nil{
+			_ = fw.Conn.closeConn(false)
+			return nil, err
+		}
+		return fw, nil
+	}
 	fw := &Forwarder{
 		idMu: &sync.Mutex{},
 		emptyIdSlot: make([]int, 0, 128),
@@ -41,13 +68,12 @@ func (conf ForwarderConfig) DialTilDone(retrys int, period time.Duration) *Forwa
 		serverAddr: conf.ServerAddr,
 		isConnDown: &atomic.Bool{},
 	}
-
 	var tryRedial func()
 	tryRedial = func(){
 		fw.isConnDown.Store(true)
 		rt := 0
 		for{
-			if retrys > 0 && rt >= retrys{
+			if conf.Redialretrys > 0 && rt >= conf.Redialretrys{
 				conf.Log.Error(fmt.Sprintf("gave up dialing AC after %d retries", rt), "Forwarder", "tryRedial")
 				return
 			}
@@ -55,7 +81,7 @@ func (conf ForwarderConfig) DialTilDone(retrys int, period time.Duration) *Forwa
 			rt++
 			if err != nil{
 				conf.Log.Error(fmt.Sprintf("Failed redial on AC server (retry: %d): %s", rt, err), "Forwarder", "tryRedial")
-				time.Sleep(period)
+				time.Sleep(conf.RedialIntervel)
 				continue
 			}
 			fw.installConn(conn, tryRedial)
@@ -64,49 +90,25 @@ func (conf ForwarderConfig) DialTilDone(retrys int, period time.Duration) *Forwa
 				conf.Log.Error(fmt.Sprintf("Failed to send newdial packet after redial: %s", err), "Forwarder", "tryRedial")
 				fw.isConnDown.Store(true)
 				_ = fw.Conn.closeConn(false)
-				time.Sleep(period)
+				time.Sleep(conf.RedialIntervel)
 				continue
 			}
 			return
 		}
 	}
-
 	conf.fallback = tryRedial
-	conn, err := conf.dial()
+	conn, err := conf.DialConfig.dial()
 	if err != nil{
 		fw.Conn = conf.getEmptyConn()
-		fw.Conn.conf.fallback = tryRedial
 		fw.isConnDown.Store(true)
 		go tryRedial()
-		return fw
+		return fw, nil
 	}
 	fw.Conn = conn
-	fw.Conn.conf.fallback = tryRedial
 	if err = fw.ondial(); err != nil{
 		fw.isConnDown.Store(true)
 		_ = fw.Conn.closeConn(false)
 		go tryRedial()
-	}
-	return fw
-}
-
-func (conf ForwarderConfig) Dial() (*Forwarder, error){
-	conn, err := conf.dial()
-	if err != nil{
-		return nil, err
-	}
-	fw := &Forwarder{
-		Conn: conn,
-		idMu: &sync.Mutex{},
-		emptyIdSlot: make([]int, 0, 128),
-		idToPconn: make([]*PlayerConn, 0, 32),
-		timePoint: time.Now(),
-		serverAddr: conf.ServerAddr,
-		isConnDown: &atomic.Bool{},
-	}	
-	if err = fw.ondial(); err != nil{
-		_ = fw.Conn.closeConn(false)
-		return nil, err
 	}
 	return fw, nil
 }

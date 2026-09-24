@@ -28,23 +28,21 @@ func main() {
 }
 
 func deferioHandlerExample(){
-	const address = "127.0.0.1:19133"
-
 	slog.SetLogLoggerLevel(slog.LevelDebug)
-	chat.Global.Subscribe(chat.StdoutSubscriber{})
 
-	c := server.DefaultConfig()
-	c.Network.Address = address
-	conf, err := c.Config(slog.Default())
-	conf = diohandler.DioHandlerConfig{}.InterceptPacket(conf, address)
-	
+	chat.Global.Subscribe(chat.StdoutSubscriber{})
+	conf, err := server.DefaultConfig().Config(slog.Default())
+	conf.Listeners = []func(conf server.Config)(server.Listener, error){
+		diohandler.DioHandlerConfig{}.ListenerFWithConfig(":19133"),
+	}
 	if err != nil {
 		panic(err)
 	}
+
 	srv := conf.New()
 	srv.CloseOnProgramEnd()
-
 	srv.Listen()
+
 	for p := range srv.Accept() {
 		diohandler.SetPlayerHandler(p, player.NopHandler{})
 	}

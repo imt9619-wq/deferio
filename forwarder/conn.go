@@ -34,9 +34,9 @@ type ForwarderConnConfig struct{
 	fallback        func()
 }
 
-type DialConfig struct{
-	ForwarderConnConfig
-	DialF func(address string) (net.Conn, error)
+type DialConfig struct { // size=96 (0x60)
+    ForwarderConnConfig
+    DialF          func(address string) (net.Conn, error)
 }
 
 func (f ForwarderConnConfig) defaultForwarderConnConfig() ForwarderConnConfig{
@@ -86,7 +86,6 @@ func (d DialConfig) defaultDialConfig() DialConfig{
 }
 
 func (d DialConfig) dial() (*Conn, error){
-	d = d.defaultDialConfig()
 	conn, err := d.DialF(d.Address)
 	if err != nil{
 		return nil, fmt.Errorf("Forwarder: Failed to dial: %v", err)

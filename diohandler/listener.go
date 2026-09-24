@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/deferio/forwarder"
 	"github.com/deferio/diohandler/utils"
@@ -15,17 +14,34 @@ import (
 )
 
 type dioListener struct{
-	*minecraft.Listener
+	server.Listener
 	fw *forwarder.Forwarder
 }
 
 type DioHandlerConfig struct{
 	forwarder.DialConfig
+	ProxyListenerF func(conf server.Config) (server.Listener, error)
 }
 
-func (d DioHandlerConfig) InterceptPacket(conf server.Config, address string) server.Config{
-	conf.Listeners = []func(conf server.Config) (server.Listener, error){
-		func(conf server.Config) (server.Listener, error) {
+type MCListenerWrap struct{*minecraft.Listener}
+func (w MCListenerWrap) Accept() (session.Conn, error){
+	conn, err := w.Listener.Accept()
+	return conn.(session.Conn), err
+}
+func (w MCListenerWrap) Disconnect(conn session.Conn, reason string) error{
+	return w.Listener.Disconnect(conn.(*minecraft.Conn), reason)
+}
+
+func (d DioHandlerConfig) ListenerFWithConfig(address string) func(conf server.Config) (server.Listener, error){
+	return func(conf server.Config) (server.Listener, error){
+		var l server.Listener
+		if d.ProxyListenerF != nil{
+			proxyl, err := d.ProxyListenerF(conf)
+			if err != nil {
+				return nil, fmt.Errorf("create session listener through ProxyListenF: %w", err)
+			}
+			l = proxyl
+		}else{
 			cfg := minecraft.ListenConfig{
 				MaximumPlayers:         conf.MaxPlayers,
 				StatusProvider:         conf.StatusProvider,
@@ -37,16 +53,19 @@ func (d DioHandlerConfig) InterceptPacket(conf server.Config, address string) se
 			if conf.Log.Enabled(context.Background(), slog.LevelDebug) {
 				cfg.ErrorLog = conf.Log.With("net origin", "gophertunnel")
 			}
-			l, err := cfg.Listen("raknet", address)
+			mcl, err := cfg.Listen("raknet", address)
 			if err != nil {
 				return nil, fmt.Errorf("create minecraft listener: %w", err)
 			}
-			conf.Log.Info("Listener running.", "addr", l.Addr())
-			fw := forwarder.ForwarderConfig{DialConfig: d.DialConfig, ServerAddr: address}.DialTilDone(0, 30*time.Second)
-			return &dioListener{Listener: l, fw: fw}, nil
-		},
+			conf.Log.Info("Listener running.", "addr", mcl.Addr())
+			l = MCListenerWrap{Listener: mcl}
+		}
+		fw, err := forwarder.ForwarderConfig{DialConfig: d.DialConfig, ServerAddr: address}.Dial()
+		if err != nil{
+			return nil, fmt.Errorf("create forwarder: %w", err)
+		}
+		return &dioListener{Listener: l, fw: fw}, nil
 	}
-	return conf
 }
 
 type dioSessionConn struct{
@@ -61,16 +80,9 @@ func (d *dioListener) Accept() (session.Conn, error){
 		return nil, err
 	}
 	return &dioSessionConn{
-		Conn: conn.(session.Conn), 
+		Conn: conn, 
 		fw: d.fw,
 	}, nil
-}
-
-func (d *dioListener) Disconnect(conn session.Conn, reason string) error{
-	if wrapped, ok := conn.(*dioSessionConn); ok {
-		conn = wrapped.Conn
-	}
-	return d.Listener.Disconnect(conn.(*minecraft.Conn), reason)
 }
 
 func (c *dioSessionConn) ReadPacket() (packet.Packet, error){
