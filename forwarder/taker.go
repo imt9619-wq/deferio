@@ -56,7 +56,7 @@ func (t *Taker) HandlePlayers(){
 		case *IncomingPlayerPacket:
 			t.setShieldID(pk)
 			t.idToPlayerRmu.Lock()
-			a := newAcPlayerConn(p)
+			a := newACPlayerConn(p)
 			t.idToPlayer[p.hdr.id] = a
 			t.idToPlayerRmu.Unlock()
 			select{

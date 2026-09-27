@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+type PacketResult struct {
+	Source uint8
+	T      time.Time
+	Packet ForwardPacket
+}
+
 type ACplayerConn struct{
 	id   uint16
 	xuid uint64
@@ -15,13 +21,7 @@ type ACplayerConn struct{
 	closeOnce *sync.Once
 }
 
-type PacketResult struct{
-	Source uint8
-    T      time.Time
-    Packet ForwardPacket
-}
-
-func newAcPlayerConn(p *PacketWrapper) *ACplayerConn{
+func newACPlayerConn(p *PacketWrapper) *ACplayerConn{
 	pk := p.pk.(*IncomingPlayerPacket)
 	a := &ACplayerConn{
 		id: p.hdr.id,

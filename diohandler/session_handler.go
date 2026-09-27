@@ -2,6 +2,7 @@ package diohandler
 
 import (
 	"github.com/deferio/diohandler/utils"
+	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/df-mc/dragonfly/server/world"
@@ -21,7 +22,7 @@ type packetHandlerWrapper struct{
 	diohandler handleCanceller
 }
 
-func (*DioHandler) sessionHandleCanceller() map[uint32]handleCanceller{
+func (*DioHandler) sessionHandler() map[uint32]handleCanceller{
 	return map[uint32]handleCanceller{
 		packet.IDPlayerAuthInput: &DioClientPlayerAuthInputHandler{},
 	}
@@ -39,7 +40,7 @@ func (w *packetHandlerWrapper) Handle(p packet.Packet, s *session.Session, tx *w
 
 func (dih *DioHandler) registerSessionHandlers(){
 	handlers, _ := utils.PrivateFieldByName[map[uint32]packetHandler](dih.s, "handlers")
-	for id, dioPkHandler := range dih.sessionHandleCanceller(){
+	for id, dioPkHandler := range dih.sessionHandler(){
 		oldHandler := handlers[id]
 		handlers[id] = &packetHandlerWrapper{
 			dfhandler: oldHandler,
@@ -55,7 +56,11 @@ func (*DioClientPlayerAuthInputHandler) cancelPacketHandle(pk packet.Packet, p *
 	if cache == nil{
 		return false
 	}
-	_ = pa
+	cache.movements.Flags = pa.InputData
+	cache.movements.Rotation = cube.Rotation{float64(pa.Yaw), float64(pa.Pitch)}
+	result := cache.movements.SimMovement()
+	_ = result
+	// TODO: include client movement correction
 	return false
 }
 

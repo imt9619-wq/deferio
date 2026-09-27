@@ -120,7 +120,7 @@ func (in *MovementInput) travelWater(){
 		efficenty /= DepthStriderAirborneMul
 	}
 	in.fiuldFlowPush(WaterFlowMul*(1-efficenty))
-	// TODO add magma and soul sand bubble sink and push when added to df
+	// TODO: add magma and soul sand bubble sink and push when added to df
 	if in.Swimming(){
 		lookY := utils.DirNorm(in.Rotation)[1]
 		scale := SwimLookScale
@@ -129,7 +129,7 @@ func (in *MovementInput) travelWater(){
 		}
 		head := cube.PosFromVec3(in.position.Add(mgl64.Vec3{0, SwimEyeOffset}))
 		_, fluidOnHead := in.Tx().Liquid(head)
-		if lookY <= 0 || in.Space || fluidOnHead{
+		if lookY <= 0 || in.isJump() || fluidOnHead{
 			in.Velocity[1] += (lookY - in.Velocity[1]) * scale
 		}
 	}
@@ -146,7 +146,7 @@ func (in *MovementInput) fiuldSinkNJump(){
 	if in.isSneak(){
 		in.Velocity[1] -= LiquidSinkSpeed
 	}
-	if in.Space{
+	if in.isJump(){
 		in.Velocity[1] += LiquidJumpSpeed
 	}
 }

@@ -8,18 +8,18 @@ import (
 	"sync/atomic"
 )
 
-type ListenerConfig struct{
-	ForwarderConnConfig
-	ListenerF func(address string) (net.Listener, error)
-}
-
 type Listener struct{
 	net.Listener
     closeOnce *sync.Once
-    conf      ForwarderConnConfig
+    conf      ConnConfig
     connMu    *sync.Mutex
     conns     []*Conn
-	inc       chan func()(*Taker, error)
+	inc       chan AcceptedTakerResult
+}
+
+type ListenerConfig struct{
+	ConnConfig
+	ListenerF func(address string) (net.Listener, error)
 }
 
 func (conf ListenerConfig) Listen() (*Listener, error){
@@ -29,7 +29,7 @@ func (conf ListenerConfig) Listen() (*Listener, error){
 			return net.Listen("unix", address)
 		}
 	}
-	conf.ForwarderConnConfig = conf.defaultForwarderConnConfig()
+	conf.ConnConfig = conf.defaultConnConfig()
 	l, err := conf.ListenerF(conf.Address)
 	if err != nil{
 		return nil, fmt.Errorf("FwListener: Failed to listen: %v", err)
@@ -38,9 +38,9 @@ func (conf ListenerConfig) Listen() (*Listener, error){
 		Listener: l,
 		closeOnce: &sync.Once{},
 		connMu: &sync.Mutex{},
-		conf: conf.ForwarderConnConfig,
+		conf: conf.ConnConfig,
 		conns: make([]*Conn, 0, 4),
-		inc: make(chan func() (*Taker, error), 4),
+		inc: make(chan AcceptedTakerResult, 4),
 	}
 	return fwL, nil
 }
@@ -77,14 +77,19 @@ func (l *Listener) Close(){
 	})
 }
 
-func (l *Listener) IncomingClients() chan func()(*Taker, error){
+type AcceptedTakerResult struct{
+	Taker *Taker
+	Err error
+}
+
+func (l *Listener) IncomingTakers() chan AcceptedTakerResult{
 	return l.inc
 }
 
 func (l *Listener) StartHandleClients(){
 	for{
 		conn, err := l.accept()
-		l.inc <- func() (*Taker, error){return conn, err}
+		l.inc <- AcceptedTakerResult{Taker: conn, Err: err}
 		if err != nil{
 			l.conf.Log.Error(fmt.Sprintf("Return on error: %s", err), "Listener", "StartHandleClients")
 			return

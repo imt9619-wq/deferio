@@ -37,7 +37,7 @@ func (conf DioAntiCheatConfig) StartAntiCheatServer() (*DioACserver, error){
 		close: make(chan struct{}),
 		closeOnce: &sync.Once{},
 	}
-	go a.StartDetecting()
+	go a.startDetecting()
 	return a, nil
 }
 
@@ -55,33 +55,33 @@ func (a *DioACserver) WaitTilProgramEnd() {
 	a.Close()
 }
 
-func (a *DioACserver) StartDetecting(){
+func (a *DioACserver) startDetecting(){
 	go a.l.StartHandleClients()
 	defer a.l.Close()
 	for{
 		select{
 		case <-a.close:
 			return
-		case f := <-a.l.IncomingClients():
-			t, err := f()
+		case f := <-a.l.IncomingTakers():
+			t, err := f.Taker, f.Err
 			if err != nil{
 				a.conf.Log.Error(fmt.Sprintf("Error on Incoming Takers: %s", err), "DioACserver", "StartDetecting")
 				continue
 			}
-			go a.HandleTaker(t)
+			go a.handleTaker(t)
 		}
 	}
 }
 
-func (a *DioACserver) HandleTaker(t *forwarder.Taker){
+func (a *DioACserver) handleTaker(t *forwarder.Taker){
 	go t.HandlePlayers()
 	defer t.Close()
 	for p := range t.AcceptPlayerConn(){
-		go a.HandlePlayers(p)
+		go a.handlePlayers(p)
 	}
 }
 
-func (a *DioACserver) HandlePlayers(p *forwarder.ACplayerConn){
+func (a *DioACserver) handlePlayers(p *forwarder.ACplayerConn){
 	for pk := range p.ReadPacketTilDisconnect(){
 		_ = pk
 		// handle packet...

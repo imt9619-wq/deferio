@@ -11,6 +11,7 @@ import (
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
+	"github.com/sandertv/gophertunnel/minecraft/protocol"
 )
 
 const (
@@ -53,16 +54,19 @@ const (
 
 type MovementInput struct{
 	*player.Player
-	cube.Rotation
-    Up, Down, Left, Right bool
-    Shift, Space, Ctrl    bool
-    OnGround              bool
-    Velocity              mgl64.Vec3           
-    JumpCooldown          uint
-	LastSlipperiness      float64
-	blockUnder            world.Block
-    position              mgl64.Vec3
-	flow                  mgl64.Vec3
+
+    cube.Rotation
+    Flags protocol.InputFlags
+
+    OnGround         bool
+    Velocity         mgl64.Vec3
+    JumpCooldown     uint
+    LastSlipperiness float64
+
+    blockUnder world.Block
+    position   mgl64.Vec3
+    flow       mgl64.Vec3
+	nearby     [][]cube.BBox
 }
 
 type MovementResult struct{
@@ -73,16 +77,23 @@ type MovementResult struct{
 	Slipperiness float64
 }
 
+func InitializeMovementInput(p *player.Player, in *MovementInput){
+	in.Player = p
+	in.setBlockUnder()
+	in.setOnGround()
+	in.LastSlipperiness = in.currSlippernessWithBlockUnder()
+}
+
 // lots of the movement logic is referenced on LivingEntity.travel() from 
 // https://mcsrc.dev/2/26.2/net/minecraft/world/entity/LivingEntity#L2429
-func SimMovement(in *MovementInput) MovementResult{
+func (in *MovementInput) SimMovement() MovementResult{
 	for axis := range 3{
 		if math.Abs(in.Velocity[axis]) < MomentumThreshold{
 			in.Velocity[axis] = 0
 		}
 	}
 	in.position = in.Position()
-	in.blockUnder = in.Tx().Block(cube.PosFromVec3(in.position.Sub(mgl64.Vec3{0, 0.5, 0})))
+	in.setBlockUnder()
 
 	if flow, exist := fiuldFlowOnPlayer[block.Water](in); exist{
 		in.flow = flow
@@ -104,7 +115,7 @@ func SimMovement(in *MovementInput) MovementResult{
 	if yCollision && isFalling{
 		in.OnGround = true
 		if _, ok := in.Tx().Block(cube.PosFromVec3(in.position.Sub(mgl64.Vec3{0, 0.5, 0}))).(block.Slime); 
-		ok && !in.isSneak() && !in.Space{
+		ok && !in.isSneak() && !in.isJump(){
 			in.Velocity[1] = -in.Velocity[1]
 		}
 	}else{
@@ -117,8 +128,16 @@ func SimMovement(in *MovementInput) MovementResult{
 		Velocity: in.Velocity,
 		OnGround: in.OnGround,
 		JumpCooldown: in.JumpCooldown,
-		Slipperiness: dioblocks.DFblockToBlock(in.blockUnder).Slipperiness(),
+		Slipperiness: in.currSlippernessWithBlockUnder(),
 	}
+}
+
+func (in *MovementInput) currSlippernessWithBlockUnder() float64{
+	return dioblocks.DFblockToBlock(in.blockUnder).Slipperiness()
+}
+
+func (in *MovementInput) setBlockUnder(){
+	in.blockUnder = in.Tx().Block(cube.PosFromVec3(in.position.Sub(mgl64.Vec3{0, 0.5, 0})))
 }
 
 func (in *MovementInput) bbox() cube.BBox{

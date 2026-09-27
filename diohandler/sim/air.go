@@ -40,8 +40,16 @@ func (in *MovementInput) travelAir(){
 			speed = AirborneSprintAccel
 		}
 		if in.OnGround{
-			speed = in.Speed() * in.movementMul() * max(speedMul, 0) * 
-			math.Pow(0.6/dioblocks.DFblockToBlock(in.blockUnder).Slipperiness(), 3)
+			var moveMul float64 = 1
+			if in.isStop(){
+				moveMul = 0
+			} else if in.isSneak() {
+				moveMul = SneakMovementMul
+			} else if in.isSprint() {
+				moveMul = SprintMovementMul
+			}
+			speed = in.Speed() * moveMul * max(speedMul, 0) * 
+			math.Pow(0.6/in.currSlippernessWithBlockUnder(), 3)
 			if _, isSoil := in.blockUnder.(block.SoulSoil); hasSoulSpeed && (isSand || isSoil){
 				speed *= 1.3 + 0.105 * float64(soulSpeed.Level())
 			}
@@ -57,7 +65,7 @@ func (in *MovementInput) travelAir(){
 		}else{
 			in.Velocity[1] = -ClimbSpeed
 		}
-	}else if in.Space && in.OnGround && in.JumpCooldown == 0{
+	}else if in.isJump() && in.OnGround && in.JumpCooldown == 0{
 		leapLvl := 0
 		if l, ok := in.Effect(effect.JumpBoost); ok{
 			leapLvl = l.Level()
@@ -70,10 +78,10 @@ func (in *MovementInput) travelAir(){
 			in.Velocity[2] += SprintJumpBoost * math.Cos(yawRad)
 		}
 	}
-	if !in.Space{
+	if !in.isJump(){
 		in.JumpCooldown = 0
 	}
-	// TODO add honey friction and silde when added to df
+	// TODO: add honey friction and silde when added to df
 	if !hasSoulSpeed && isSand && in.OnGround{
 		in.Velocity[0] *= SoulSandStick
 		in.Velocity[2] *= SoulSandStick

@@ -15,8 +15,8 @@ const(
 	SourceDeferioPacket
 )
 
-type DioPacket interface{
-	DioPacket()
+type dioPacket interface{
+	dioPacket()
 }
 
 type ForwardPacket interface{
@@ -40,7 +40,7 @@ const(
 var (
 	gtClientPool = packet.NewClientPool()
 	gtServerPool = packet.NewServerPool()
-	dioPool      = map[uint32]func() ForwardPacket{
+	dioPool = map[uint32]func() ForwardPacket{
 		IDNewDialPacket:            func() ForwardPacket { return &NewDialPacket{} },
 		IDIncomingPlayerPacket:     func() ForwardPacket { return &IncomingPlayerPacket{data: &PlayerGameData{PropertyData: map[string]any{}}} },
 		IDDisconnectedPlayerPacket: func() ForwardPacket { return &DisconnectedPlayerPacket{} },
@@ -67,8 +67,8 @@ func packetByHeader(h *Header) (ForwardPacket, error) {
 	return f(), nil
 }
 
-type dioPacket struct{}
-func (dioPacket) DioPacket() {}
+type nopDioPacket struct{}
+func (nopDioPacket) DioPacket(){}
 
 type NewDialPacket struct{
 	dioPacket
@@ -149,7 +149,7 @@ func (*DisconnectedPlayerPacket) Marshal(io protocol.IO){}
 
 type MovementSimResult struct{
     dioPacket
-    // TODO add related fields
+    // TODO: add related fields
     Origial *packet.PlayerAuthInput
 }
 func (*MovementSimResult) ID() uint32{return IDMovementSimResult}

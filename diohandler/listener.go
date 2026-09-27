@@ -6,12 +6,19 @@ import (
 	"log/slog"
 
 	"github.com/deferio/forwarder"
-	"github.com/deferio/diohandler/utils"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/sandertv/gophertunnel/minecraft"
-	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
+
+type MCListenerWrap struct{*minecraft.Listener}
+func (w MCListenerWrap) Accept() (session.Conn, error){
+	conn, err := w.Listener.Accept()
+	return conn.(session.Conn), err
+}
+func (w MCListenerWrap) Disconnect(conn session.Conn, reason string) error{
+	return w.Listener.Disconnect(conn.(*minecraft.Conn), reason)
+}
 
 type dioListener struct{
 	server.Listener
@@ -21,15 +28,6 @@ type dioListener struct{
 type DioHandlerConfig struct{
 	forwarder.DialConfig
 	ProxyListenerF func(conf server.Config) (server.Listener, error)
-}
-
-type MCListenerWrap struct{*minecraft.Listener}
-func (w MCListenerWrap) Accept() (session.Conn, error){
-	conn, err := w.Listener.Accept()
-	return conn.(session.Conn), err
-}
-func (w MCListenerWrap) Disconnect(conn session.Conn, reason string) error{
-	return w.Listener.Disconnect(conn.(*minecraft.Conn), reason)
 }
 
 func (d DioHandlerConfig) ListenerFWithConfig(address string) func(conf server.Config) (server.Listener, error){
@@ -66,54 +64,4 @@ func (d DioHandlerConfig) ListenerFWithConfig(address string) func(conf server.C
 		}
 		return &dioListener{Listener: l, fw: fw}, nil
 	}
-}
-
-type dioSessionConn struct{
-	session.Conn
-	h  *DioHandler
-	fw *forwarder.Forwarder
-}
-
-func (d *dioListener) Accept() (session.Conn, error){
-	conn, err := d.Listener.Accept()
-	if err != nil {
-		return nil, err
-	}
-	return &dioSessionConn{
-		Conn: conn, 
-		fw: d.fw,
-	}, nil
-}
-
-func (c *dioSessionConn) ReadPacket() (packet.Packet, error){
-	pk, err := c.Conn.ReadPacket()
-	if err != nil {
-		return nil, err
-	}
-	if c.h != nil{
-		c.h.HandleClientPacket(pk)
-	}
-	return pk, nil
-}
-
-func (c *dioSessionConn) WritePacket(pk packet.Packet) error{
-	if c.h != nil{
-		c.h.HandleServerPacket(pk)
-	}
-	return c.Conn.WritePacket(pk)
-}
-
-func SessionDioConn(s *session.Session) (*dioSessionConn, bool){
-	if s == nil {
-		return nil, false
-	}
-	conn, ok := utils.PrivateFieldByName[session.Conn](s, "conn")
-	if !ok {
-		return nil, false
-	}
-	wrapped, ok := conn.(*dioSessionConn)
-	if !ok {
-		return nil, false
-	}
-	return wrapped, true
 }

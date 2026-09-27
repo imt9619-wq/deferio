@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/deferio/internel"
+	"github.com/deferio/internal"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
 )
 
@@ -24,7 +24,7 @@ const(
 	maxFrameBytes = 16 << 20
 )
 
-type ForwarderConnConfig struct{
+type ConnConfig struct{
 	FlushRate       time.Duration
     Address         string
     BytePerWrite    int
@@ -34,12 +34,7 @@ type ForwarderConnConfig struct{
 	fallback        func()
 }
 
-type DialConfig struct { // size=96 (0x60)
-    ForwarderConnConfig
-    DialF          func(address string) (net.Conn, error)
-}
-
-func (f ForwarderConnConfig) defaultForwarderConnConfig() ForwarderConnConfig{
+func (f ConnConfig) defaultConnConfig() ConnConfig{
 	if f.FlushRate == 0{
 		f.FlushRate = time.Millisecond * 50
 	}
@@ -57,7 +52,7 @@ func (f ForwarderConnConfig) defaultForwarderConnConfig() ForwarderConnConfig{
 
 type Conn struct{
 	net.Conn
-    conf      ForwarderConnConfig
+    conf      ConnConfig
     closeOnce *sync.Once
     fallbackOnce *sync.Once
     close     chan struct{}
@@ -75,25 +70,7 @@ type Conn struct{
     shieldIDSet *atomic.Bool
 }
 
-func (d DialConfig) defaultDialConfig() DialConfig{
-	if d.DialF == nil{
-		d.DialF = func(address string) (net.Conn, error){
-			return net.Dial("unix", address)
-		}
-	}
-	d.ForwarderConnConfig = d.defaultForwarderConnConfig()
-	return d
-}
-
-func (d DialConfig) dial() (*Conn, error){
-	conn, err := d.DialF(d.Address)
-	if err != nil{
-		return nil, fmt.Errorf("Forwarder: Failed to dial: %v", err)
-	}
-	return d.newConn(conn), nil
-}
-
-func (f ForwarderConnConfig) getEmptyConn() *Conn{
+func (f ConnConfig) getEmptyConn() *Conn{
 	return &Conn{
 		conf: f,
 		closeOnce: &sync.Once{},
@@ -111,7 +88,7 @@ func (f ForwarderConnConfig) getEmptyConn() *Conn{
 	}
 }
 
-func (f ForwarderConnConfig) newConn(conn net.Conn) *Conn{
+func (f ConnConfig) newConn(conn net.Conn) *Conn{
 	c := f.getEmptyConn()
 	c.Conn = conn
 	c.loopStarted.Store(true)
@@ -316,7 +293,7 @@ func (c *Conn) forwardPacket(pk *PacketWrapper, id uint16, source uint8) error{
 	pk.hdr.id = id
 	pk.hdr.packetID = pk.pk.ID()
 	pk.hdr.source = source
-	_, ok := pk.pk.(DioPacket)
+	_, ok := pk.pk.(dioPacket)
 	pk.hdr.dioPacket = ok
 	return c.writePacket(pk)
 }

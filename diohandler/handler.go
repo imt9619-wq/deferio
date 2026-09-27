@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/deferio/forwarder"
 	"github.com/deferio/diohandler/utils"
+	"github.com/deferio/forwarder"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/entity"
 	"github.com/df-mc/dragonfly/server/player"
@@ -28,11 +28,11 @@ const(
 	ReachDist = 3.0
 )
 
-func NewDioHandler(p *player.Player) *DioHandler{
+func newDioHandler(p *player.Player) *DioHandler{
 	dih := &DioHandler{
 		s: p.Data().Session,
 	}
-	conn, ok := SessionDioConn(p.Data().Session)
+	conn, ok := sessionDioConn(p.Data().Session)
 	if !ok{
 		panic("NewDioHandler: session conn is not *dioSessionConn")
 	}
@@ -46,10 +46,8 @@ func NewDioHandler(p *player.Player) *DioHandler{
 	}
 	dih.fw.NewIncomingPlayer(conn.Conn.(*minecraft.Conn).GameData())
 	dih.p = newPlayerCache(p)
-	dih.registerSessionHandlers()
-	if ok{
-		conn.h = dih
-	}
+	conn.handlerRegsistered.Store(false)
+	conn.h = dih
 	return dih
 }
 
@@ -58,24 +56,24 @@ func SetPlayerHandler(p *player.Player, h player.Handler) error{
 	ph := p.Handler()
 	dih, ok := ph.(*DioHandler)
 	if !ok{
-		dih = NewDioHandler(p)
+		dih = newDioHandler(p)
 	}
 	dih.Handler = h
 	h = dih
 	return nil
 }
 
-func (d *DioHandler) HandleClientPacket(pk packet.Packet){
+func (d *DioHandler) handleClientPacket(pk packet.Packet){
 	h, ok := IDToDioClientPacketHandler[pk.ID()]
 	if ok{
-		h.HandlePacket(pk, d)
+		h.handlePacket(pk, d)
 	}
 }
 
-func (d *DioHandler) HandleServerPacket(pk packet.Packet){
+func (d *DioHandler) handleServerPacket(pk packet.Packet){
 	h, ok := IDToDioServerPacketHandler[pk.ID()]
 	if ok{
-		h.HandlePacket(pk, d)
+		h.handlePacket(pk, d)
 	}
 }
 
