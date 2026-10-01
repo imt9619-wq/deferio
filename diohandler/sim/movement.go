@@ -4,7 +4,7 @@ import (
 	"math"
 
 	dioblocks "github.com/deferio/diohandler/blocks"
-	"github.com/deferio/diohandler/utils"
+	"github.com/deferio/utils"
 	"github.com/df-mc/dragonfly/server/block"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/entity/effect"
@@ -14,22 +14,32 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
 )
 
-const (
+const(
+	Standing = iota
+	Sneaking
+	Swimming
+	Crawling
+	Gliding
+)
+
+const(
 	PlayerJumpCooldown      = 10
 	AirborneSprintAccel     = 0.026
 	AirborneDefaultAccel    = 0.02
 	SlipperinessToFriction  = 0.91
+	DefaultPlayerSpeed      = 0.1
 	SprintMovementMul       = 1.3
 	SprintJumpBoost         = 0.2
 	JumpSpeed               = 0.42
 	MomentumThreshold       = 0.003
+	MomentumThresholdSq     = MomentumThreshold * MomentumThreshold
 	MaxStepHeight           = 0.6
 	ClimbSpeed              = 0.1176
-	SneakProbeBBoxShrinks   = 0.025
+	ShrinkedProbeBBoxWidth  = 0.025
 	SneakMovementMul        = 0.3
 	CobwebVerticalSpeed     = 0.05
 	CobwebHorizontalSpeed   = 0.2
-	WaterDefaultSpeed       = 0.08
+	WaterDefaultSpeed       = 0.02
 	DepthStriderAirborneMul = 0.5
 	SlowFallingGravity      = 0.01
 	LiquidSinkSpeed         = 0.04
@@ -48,57 +58,75 @@ const (
 	SoulSandStick           = 0.4
 	LavaDrag                = 0.5
 	LavaFlowPushForce       = 0.014 
-	LavaSpeed               = 0.02
-	FiuldGravity            = 0.02
+	FiuldSpeed              = 0.02
+	LavaGravity             = 0.02
+	WaterGravity            = 0.08
+	ProbeOffset             = 0.003
+	AirSlipperness          = 1.0
 )
 
 type MovementInput struct{
 	*player.Player
 
     cube.Rotation
-    Flags protocol.InputFlags
+    Flags         protocol.InputFlags
+    RawMoveVector mgl64.Vec2
 
-    OnGround         bool
-    Velocity         mgl64.Vec3
-    JumpCooldown     uint
-    LastSlipperiness float64
+    OnGround bool
+    Velocity mgl64.Vec3
+    Position mgl64.Vec3
 
-    blockUnder world.Block
-    position   mgl64.Vec3
-    flow       mgl64.Vec3
-	nearby     [][]cube.BBox
+    jumpCooldown     uint
+    lastSlipperiness float64
+    pose             int
+    blockUnder       world.Block
+    flow             mgl64.Vec3
+    fiuldHeight      float64
 }
 
 type MovementResult struct{
-	Position mgl64.Vec3
-	Velocity mgl64.Vec3
-	OnGround bool
-	JumpCooldown uint
-	Slipperiness float64
+	Position     mgl64.Vec3
+    Velocity     mgl64.Vec3
+    OnGround     bool
+    Pose         int
 }
 
 func InitializeMovementInput(p *player.Player, in *MovementInput){
 	in.Player = p
 	in.setBlockUnder()
 	in.setOnGround()
-	in.LastSlipperiness = in.currSlippernessWithBlockUnder()
+	in.lastSlipperiness = in.currSlippernessWithBlockUnder()
 }
 
 // lots of the movement logic is referenced on LivingEntity.travel() from 
 // https://mcsrc.dev/2/26.2/net/minecraft/world/entity/LivingEntity#L2429
 func (in *MovementInput) SimMovement() MovementResult{
+	if in.RawMoveVector.LenSqr() > 1{
+		in.RawMoveVector = in.RawMoveVector.Normalize()
+	}
 	for axis := range 3{
 		if math.Abs(in.Velocity[axis]) < MomentumThreshold{
 			in.Velocity[axis] = 0
 		}
 	}
-	in.position = in.Position()
 	in.setBlockUnder()
 
-	if flow, exist := fiuldFlowOnPlayer[block.Water](in); exist{
+	flow, height := fiuldFlowOnPlayer[block.Water](in)
+	in.fiuldHeight = height
+	if in.pose == Swimming && height > 0 && in.isSprint(){
+	}else if height > 1 && in.isSprint(){
+		in.pose = Swimming
+	}else if utils.BBoxIntersectsSolid(in.Tx(), in.bboxWithPose(Standing)) && 
+	!utils.BBoxIntersectsSolid(in.Tx(), in.bboxWithPose(Crawling)){
+		in.pose = Crawling
+	}else if in.isSneak(){
+		in.pose = Sneaking
+	}
+
+	if height > 0{
 		in.flow = flow
 		in.travelWater()
-	}else if flow, exist := fiuldFlowOnPlayer[block.Lava](in); exist{
+	}else if flow, height := fiuldFlowOnPlayer[block.Lava](in); height > 0{
 		in.flow = flow
 		in.travelLava()
 	}else{
@@ -108,27 +136,31 @@ func (in *MovementInput) SimMovement() MovementResult{
 	in.stopOnEdge()
 	
 	maxDt := in.collide()
-	in.position = in.position.Add(maxDt)
+	in.Position = in.Position.Add(maxDt)
 	if maxDt[0] != in.Velocity[0]{in.Velocity[0] = 0}
-	yCollision, isFalling := maxDt[1] != in.Velocity[1], in.Velocity[1] < 0
+	yCollision, oldY := maxDt[1] != in.Velocity[1], in.Velocity[1]
 	if yCollision{in.Velocity[1] = 0}
-	if yCollision && isFalling{
+	if yCollision && oldY < 0{
 		in.OnGround = true
-		if _, ok := in.Tx().Block(cube.PosFromVec3(in.position.Sub(mgl64.Vec3{0, 0.5, 0}))).(block.Slime); 
+		if _, ok := in.Tx().Block(cube.PosFromVec3(in.Position.Sub(mgl64.Vec3{0, 0.5, 0}))).(block.Slime); 
 		ok && !in.isSneak() && !in.isJump(){
-			in.Velocity[1] = -in.Velocity[1]
+			in.Velocity[1] = -oldY
 		}
 	}else{
 		in.setOnGround()
 	}
 	if maxDt[2] != in.Velocity[2]{in.Velocity[2] = 0}
+	if in.OnGround{
+		in.lastSlipperiness = in.currSlippernessWithBlockUnder()
+	}else{
+		in.lastSlipperiness = AirSlipperness
+	}
 
 	return MovementResult{
-		Position: in.position,
+		Position: in.Position,
 		Velocity: in.Velocity,
 		OnGround: in.OnGround,
-		JumpCooldown: in.JumpCooldown,
-		Slipperiness: in.currSlippernessWithBlockUnder(),
+		Pose: in.pose,
 	}
 }
 
@@ -137,11 +169,7 @@ func (in *MovementInput) currSlippernessWithBlockUnder() float64{
 }
 
 func (in *MovementInput) setBlockUnder(){
-	in.blockUnder = in.Tx().Block(cube.PosFromVec3(in.position.Sub(mgl64.Vec3{0, 0.5, 0})))
-}
-
-func (in *MovementInput) bbox() cube.BBox{
-	return in.H().Type().BBox(in.Player).Translate(in.position)
+	in.blockUnder = in.Tx().Block(cube.PosFromVec3(in.Position.Sub(mgl64.Vec3{0, 0.5, 0})))
 }
 
 func (in *MovementInput) stopOnEdge() {
@@ -160,9 +188,7 @@ func (in *MovementInput) stopOnEdge() {
 		}
 		in.Velocity[axis] = planeFinal
 	}
-	probeBBox := utils.BBoxOnBBoxFaceWithThreshold(in.bbox().Grow(-SneakProbeBBoxShrinks),
-		cube.FaceDown,
-		MaxStepHeight+utils.ProbeOffset+SneakProbeBBoxShrinks)
+	probeBBox := in.feetUnderBBox().ExtendTowards(cube.FaceDown, MaxStepHeight)
 	for in.Velocity[0] != 0 {
 		if utils.BBoxIntersectsSolid(in.Tx(), probeBBox.Translate(utils.SetVec3AxisTo(in.Velocity, 2, 0))) {
 			break
@@ -220,7 +246,7 @@ func (in *MovementInput) isFalling() bool{
 	return in.Velocity[1] < 0
 }
 
-func (in *MovementInput) maxDelta(aabb cube.BBox, dt mgl64.Vec3) mgl64.Vec3 {
+func (in *MovementInput) maxDelta(aabb cube.BBox, dt mgl64.Vec3) mgl64.Vec3{
 	if dt[1] != 0 {
 		blocksIn := aabb.ExtendTowards(utils.FaceOnDeltaAxis(dt, 1), math.Abs(dt[1]))
 		for bbox := range utils.BBoxesInBBox(in.Tx(), blocksIn) {
@@ -257,17 +283,36 @@ func (in *MovementInput) maxDelta(aabb cube.BBox, dt mgl64.Vec3) mgl64.Vec3 {
 }
 
 func (in *MovementInput) moveRelative(speed float64){
-	off := in.keyOffset()
-	dirRad := (off + in.Yaw()) * (math.Pi / 180)
-	accel := speed * in.inputLen()
-	in.Velocity[0] += accel * -math.Sin(dirRad)
-	in.Velocity[2] += accel * math.Cos(dirRad)
+	dirRad := in.Yaw() * (math.Pi / 180)
+	sin, cos := math.Sin(dirRad), math.Cos(dirRad)
+	in.Velocity[0] += speed * (in.RawMoveVector[0]*cos - in.RawMoveVector[1]*sin)
+	in.Velocity[2] += speed * (in.RawMoveVector[1]*cos + in.RawMoveVector[0]*sin)
+}
+
+func (in *MovementInput) bboxWithPose(pose int) cube.BBox{
+	s := in.Scale()
+	switch pose{
+	case Gliding, Swimming, Crawling:
+		return cube.Box(-0.3*s, 0, -0.3*s, 0.3*s, 0.6*s, 0.3*s).Translate(in.Position)
+	case Sneaking:
+		return cube.Box(-0.3*s, 0, -0.3*s, 0.3*s, 1.49*s, 0.3*s).Translate(in.Position)
+	default:
+		return cube.Box(-0.3*s, 0, -0.3*s, 0.3*s, 1.8*s, 0.3*s).Translate(in.Position)
+	}
+}
+
+func (in *MovementInput) bbox() cube.BBox{
+	return in.bboxWithPose(in.pose)
+}
+
+func (in *MovementInput) feetUnderBBox() cube.BBox{
+	s := in.Scale()
+	return cube.Box(-0.275*s, -ProbeOffset, -0.275*s, 0.275*s, 0, 0.275*s).Translate(in.Position)
 }
 
 func (in *MovementInput) setOnGround(){
 	in.OnGround = false
-	tinyBBox := utils.BBoxOnBBoxFaceWithThreshold(in.bbox(), cube.FaceDown, utils.ProbeOffset)
-	if in.Velocity[1] == 0 && utils.BBoxIntersectsSolid(in.Tx(), tinyBBox) {
+	if in.Velocity[1] == 0 && utils.BBoxIntersectsSolid(in.Tx(), in.feetUnderBBox()) {
 		in.OnGround = true
 	}
 }

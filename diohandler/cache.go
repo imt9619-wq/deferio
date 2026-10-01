@@ -2,7 +2,7 @@ package diohandler
 
 import (
 	diosim "github.com/deferio/diohandler/sim"
-	"github.com/deferio/diohandler/utils"
+	"github.com/deferio/utils"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl32"
@@ -14,10 +14,11 @@ type playerCache struct{
 	lastTickDelta      mgl64.Vec3
     lastTick           uint64
     lastTickBlockUnder world.Block
-    jumpCooldown       int
-	lastTickEffects    map[int]int
-    movements          *diosim.MovementInput
-	tickTODOs          map[uint64][]func()
+	jumpCooldown       int
+
+	lastTickEffects map[int]int
+    movements       *diosim.MovementInput
+    tickTODOs       map[uint64][]func()
 
     serverInpause *utils.OrderedMap[uint64, mgl32.Vec3]
     serverReset   *utils.OrderedMap[uint64, movePlayerData]

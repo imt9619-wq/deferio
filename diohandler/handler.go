@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/deferio/diohandler/utils"
+	"github.com/deferio/utils"
 	"github.com/deferio/forwarder"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/entity"

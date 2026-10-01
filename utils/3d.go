@@ -59,7 +59,7 @@ func BBoxesInBBox(tx *world.Tx, bb cube.BBox) iter.Seq[cube.BBox]{
 func CubePosWithInBBox(bb cube.BBox) iter.Seq[cube.Pos]{
 	return func(yield func(cube.Pos) bool) {
 		for x := int(math.Floor(bb.Min()[0])); x <= int(math.Floor(bb.Max()[0])); x++{
-			for y := int(math.Floor(bb.Min()[2])); y <= int(math.Floor(bb.Max()[1])); y++{
+			for y := int(math.Floor(bb.Min()[1])); y <= int(math.Floor(bb.Max()[1])); y++{
 				for z := int(math.Floor(bb.Min()[2])); z <= int(math.Floor(bb.Max()[2])); z++{
 					if !yield(cube.Pos{x, y, z}){
 						return 

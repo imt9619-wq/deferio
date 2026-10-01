@@ -1,7 +1,7 @@
 package diohandler
 
 import (
-	"github.com/deferio/diohandler/utils"
+	"github.com/deferio/utils"
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )

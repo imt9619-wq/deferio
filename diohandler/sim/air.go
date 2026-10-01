@@ -8,11 +8,12 @@ import (
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/entity/effect"
 	"github.com/df-mc/dragonfly/server/item/enchantment"
+	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
 func (in *MovementInput) travelAir(){
 	// friction...
-	in.applyFriction(in.LastSlipperiness * SlipperinessToFriction)
+	in.applyFriction(in.lastSlipperiness * SlipperinessToFriction)
 
 	// drag and gravity...
 	if !in.appliedLevitation() && !in.OnGround{
@@ -43,12 +44,10 @@ func (in *MovementInput) travelAir(){
 			var moveMul float64 = 1
 			if in.isStop(){
 				moveMul = 0
-			} else if in.isSneak() {
+			}else if in.isSneak() || in.pose == Crawling{
 				moveMul = SneakMovementMul
-			} else if in.isSprint() {
-				moveMul = SprintMovementMul
 			}
-			speed = in.Speed() * moveMul * max(speedMul, 0) * 
+			speed = in.speed() * moveMul * max(speedMul, 0) * 
 			math.Pow(0.6/in.currSlippernessWithBlockUnder(), 3)
 			if _, isSoil := in.blockUnder.(block.SoulSoil); hasSoulSpeed && (isSand || isSoil){
 				speed *= 1.3 + 0.105 * float64(soulSpeed.Level())
@@ -56,8 +55,8 @@ func (in *MovementInput) travelAir(){
 		}
 		in.moveRelative(speed)
 	}
-	in.JumpCooldown = max(0, in.JumpCooldown-1)
-	if dioblocks.DFblockToBlock(in.Tx().Block(cube.PosFromVec3(in.position))).Climbable(){
+	in.jumpCooldown = max(0, in.jumpCooldown-1)
+	if dioblocks.DFblockToBlock(in.Tx().Block(cube.PosFromVec3(in.Position))).Climbable(){
 		if !in.isNoMove(){
 			in.Velocity[1] = ClimbSpeed
 		}else if in.OnGround || in.isSneak(){
@@ -65,13 +64,13 @@ func (in *MovementInput) travelAir(){
 		}else{
 			in.Velocity[1] = -ClimbSpeed
 		}
-	}else if in.isJump() && in.OnGround && in.JumpCooldown == 0{
+	}else if in.Flags.Load(packet.InputFlagStartJumping) && in.OnGround && in.jumpCooldown == 0{
 		leapLvl := 0
 		if l, ok := in.Effect(effect.JumpBoost); ok{
 			leapLvl = l.Level()
 		}
 		in.Velocity[1] = max(in.Velocity[1], JumpSpeed + 0.1*float64(leapLvl))
-		in.JumpCooldown = PlayerJumpCooldown
+		in.jumpCooldown = PlayerJumpCooldown
 		if in.isSprint(){
 			yawRad := in.Yaw() * (math.Pi / 180)
 			in.Velocity[0] += SprintJumpBoost * -math.Sin(yawRad)
@@ -79,7 +78,7 @@ func (in *MovementInput) travelAir(){
 		}
 	}
 	if !in.isJump(){
-		in.JumpCooldown = 0
+		in.jumpCooldown = 0
 	}
 	// TODO: add honey friction and silde when added to df
 	if !hasSoulSpeed && isSand && in.OnGround{

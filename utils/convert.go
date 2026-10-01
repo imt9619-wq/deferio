@@ -12,6 +12,10 @@ const(
 	ProbeOffset = 0.003
 )
 
+func Mgl64Vec2FromMgl32(vec mgl32.Vec2) mgl64.Vec2{
+	return mgl64.Vec2{float64(vec[0]), float64(vec[0])}
+}
+
 func Mgl32FromMgl64(vec mgl64.Vec3) mgl32.Vec3{
 	return mgl32.Vec3{float32(vec[0]), float32(vec[1]), float32(vec[2])}
 }

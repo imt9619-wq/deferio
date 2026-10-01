@@ -3,7 +3,7 @@ package diohandler
 import (
 	"sync/atomic"
 
-	"github.com/deferio/diohandler/utils"
+	"github.com/deferio/utils"
 	"github.com/deferio/forwarder"
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"

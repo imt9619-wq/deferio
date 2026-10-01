@@ -6,12 +6,14 @@ func (in *MovementInput) travelLava(){
 	in.Velocity[1] *= LavaDrag
 	
 	// gravity...
-	in.applyFiuldGravity()
+	if !in.appliedLevitation(){
+		in.Velocity[1] -= LavaGravity
+	}
 
 	// move...
 	in.fiuldSinkNJump()
 	in.fiuldFlowPush(LavaFlowPushForce)
 	if !in.isStop(){
-		in.moveRelative(LavaSpeed)
+		in.moveRelative(FiuldSpeed)
 	}
 }
