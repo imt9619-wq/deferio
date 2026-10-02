@@ -16,14 +16,11 @@ func (in *MovementInput) travelAir(){
 	in.applyFriction(in.lastSlipperiness * SlipperinessToFriction)
 
 	// drag and gravity...
-	if !in.appliedLevitation() && !in.OnGround{
-		gravity := Gravity
-		if _, ok := in.Effect(effect.SlowFalling); in.isFalling() && ok{
-			gravity = SlowFallingGravity
-		}
-		in.Velocity[1] = (in.Velocity[1] - gravity) * AirVerticalDrag
+	if !in.OnGround{
+		in.applyAirGravity(DefaultGravityMul)
+		in.Velocity[1] *= AirVerticalDrag
 	}
-	
+
 	// move...
 	_, isSand := in.blockUnder.(block.SoulSand)
 	soulSpeed, hasSoulSpeed := in.Armour().Boots().Enchantment(enchantment.SoulSpeed)
@@ -36,19 +33,9 @@ func (in *MovementInput) travelAir(){
 			speedMul *= 1 - 0.15*float64(e.Level())
 		}
 		
-		speed := AirborneDefaultAccel
-		if in.isSprint(){
-			speed = AirborneSprintAccel
-		}
+		speed := AirborneDefaultAccel * in.speed()
 		if in.OnGround{
-			var moveMul float64 = 1
-			if in.isStop(){
-				moveMul = 0
-			}else if in.isSneak() || in.pose == Crawling{
-				moveMul = SneakMovementMul
-			}
-			speed = in.speed() * moveMul * max(speedMul, 0) * 
-			math.Pow(0.6/in.currSlippernessWithBlockUnder(), 3)
+			speed = in.airOnGroundMoveMul() * max(speedMul, 0)
 			if _, isSoil := in.blockUnder.(block.SoulSoil); hasSoulSpeed && (isSand || isSoil){
 				speed *= 1.3 + 0.105 * float64(soulSpeed.Level())
 			}
@@ -87,3 +74,20 @@ func (in *MovementInput) travelAir(){
 	}
 }
 
+func (in *MovementInput) airOnGroundMoveMul() float64{
+	var moveMul float64 = 1
+	if in.isSneak() || in.pose == Crawling{
+		moveMul = SneakMovementMul
+	}
+	return in.speed() * moveMul * math.Pow(0.6/in.currSlippernessWithBlockUnder(), 3)
+}
+
+func (in *MovementInput) applyAirGravity(gravityMul float64){
+	if !in.appliedLevitation(){	
+		gravity := Gravity
+		if _, ok := in.Effect(effect.SlowFalling); in.isFalling() && ok{
+			gravity = SlowFallingGravity
+		}
+		in.Velocity[1] += gravity * (gravityMul)
+	}
+}

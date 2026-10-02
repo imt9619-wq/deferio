@@ -8,10 +8,12 @@ import (
 	"github.com/df-mc/dragonfly/server/block"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/entity/effect"
+	"github.com/df-mc/dragonfly/server/item"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
+	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
 const(
@@ -63,6 +65,11 @@ const(
 	WaterGravity            = 0.08
 	ProbeOffset             = 0.003
 	AirSlipperness          = 1.0
+	FlyFriction             = 0.6
+	FlySpeed                = 0.05
+	FlyVerticalDrag         = 0.6
+	Negiaible               = 1e-5
+	DefaultGravityMul       = -1
 )
 
 type MovementInput struct{
@@ -76,6 +83,7 @@ type MovementInput struct{
     Velocity mgl64.Vec3
     Position mgl64.Vec3
 
+	flying           bool
     jumpCooldown     uint
     lastSlipperiness float64
     pose             int
@@ -98,6 +106,13 @@ func InitializeMovementInput(p *player.Player, in *MovementInput){
 	in.lastSlipperiness = in.currSlippernessWithBlockUnder()
 }
 
+func (in *MovementInput) SeedFromPlayerAuthInputPacket(pk *packet.PlayerAuthInput){
+	// TODO: seed position as well
+	in.Flags = pk.InputData
+	in.Rotation = cube.Rotation{float64(pk.Yaw), float64(pk.Pitch)}
+	in.RawMoveVector = utils.Mgl64Vec2FromMgl32(pk.RawMoveVector)
+}
+
 // lots of the movement logic is referenced on LivingEntity.travel() from 
 // https://mcsrc.dev/2/26.2/net/minecraft/world/entity/LivingEntity#L2429
 func (in *MovementInput) SimMovement() MovementResult{
@@ -111,24 +126,45 @@ func (in *MovementInput) SimMovement() MovementResult{
 	}
 	in.setBlockUnder()
 
-	flow, height := fiuldFlowOnPlayer[block.Water](in)
-	in.fiuldHeight = height
-	if in.pose == Swimming && height > 0 && in.isSprint(){
-	}else if height > 1 && in.isSprint(){
-		in.pose = Swimming
-	}else if utils.BBoxIntersectsSolid(in.Tx(), in.bboxWithPose(Standing)) && 
-	!utils.BBoxIntersectsSolid(in.Tx(), in.bboxWithPose(Crawling)){
-		in.pose = Crawling
-	}else if in.isSneak(){
-		in.pose = Sneaking
+	if in.Flags.Load(packet.InputFlagStartFlying) && in.GameMode().AllowsFlying(){
+		in.flying = true
+	}else if in.Flags.Load(packet.InputFlagStopFlying) || (in.GameMode() != world.GameModeCreative && in.OnGround){
+		in.flying = false
+		in.pose = Standing
 	}
 
-	if height > 0{
+	flow, waterHeight := fiuldFlowOnPlayer[block.Water](in)
+	in.fiuldHeight = waterHeight
+	c := in.Armour().Chestplate()
+	if in.pose == Gliding && (c.Durability() == 0 || in.Flags.Load(packet.InputFlagStopGliding) || in.OnGround || waterHeight > 0){
+		in.pose = Standing
+	}
+	if (waterHeight > 1 && in.isSprint()) || (in.pose == Swimming && waterHeight > 0 && in.isSprint()) && !in.flying{
+		in.pose = Swimming
+	}else if  _, ok := c.Item().(item.Elytra); (in.Flags.Load(packet.InputFlagStartGliding) || in.pose == Gliding) && 
+	!in.OnGround && ok && c.Durability() >= 2 && !in.flying{
+		in.pose = Gliding
+	}else if standInBlock := utils.BBoxIntersectsSolid(in.Tx(), in.bboxWithPose(Standing));
+	standInBlock && !utils.BBoxIntersectsSolid(in.Tx(), in.bboxWithPose(Sneaking)){
+		in.pose = Sneaking
+	}else if standInBlock && !utils.BBoxIntersectsSolid(in.Tx(), in.bboxWithPose(Crawling)){
+		in.pose = Crawling
+	}else if in.isSneak() && in.pose == Standing && !in.flying{
+		in.pose = Sneaking
+	}else{
+		in.pose = Standing
+	}
+
+	if in.flying{
+		in.travelFly()
+	}else if waterHeight > 0{
 		in.flow = flow
 		in.travelWater()
-	}else if flow, height := fiuldFlowOnPlayer[block.Lava](in); height > 0{
+	}else if flow, lavaHeight := fiuldFlowOnPlayer[block.Lava](in); lavaHeight > 0{
 		in.flow = flow
 		in.travelLava()
+	}else if in.pose == Gliding{
+		in.travelGlide()
 	}else{
 		in.travelAir()
 	}
@@ -162,6 +198,13 @@ func (in *MovementInput) SimMovement() MovementResult{
 		OnGround: in.OnGround,
 		Pose: in.pose,
 	}
+}
+
+func (in *MovementInput) speed() float64{
+	if in.isSprint(){
+		return SprintMovementMul * DefaultPlayerSpeed
+	}
+	return DefaultPlayerSpeed
 }
 
 func (in *MovementInput) currSlippernessWithBlockUnder() float64{
@@ -283,8 +326,7 @@ func (in *MovementInput) maxDelta(aabb cube.BBox, dt mgl64.Vec3) mgl64.Vec3{
 }
 
 func (in *MovementInput) moveRelative(speed float64){
-	dirRad := in.Yaw() * (math.Pi / 180)
-	sin, cos := math.Sin(dirRad), math.Cos(dirRad)
+	sin, cos := in.yawSinCos()
 	in.Velocity[0] += speed * (in.RawMoveVector[0]*cos - in.RawMoveVector[1]*sin)
 	in.Velocity[2] += speed * (in.RawMoveVector[1]*cos + in.RawMoveVector[0]*sin)
 }
@@ -331,8 +373,8 @@ func (in *MovementInput) slowOnCobweb(){
 }
 
 func (in *MovementInput) applyFriction(friction float64){
-	in.Velocity[0] = in.Velocity[0] * friction
-	in.Velocity[2] = in.Velocity[2] * friction
+	in.Velocity[0] *= friction
+	in.Velocity[2] *= friction
 }
 
 func (in *MovementInput) appliedLevitation() bool{
@@ -341,4 +383,9 @@ func (in *MovementInput) appliedLevitation() bool{
 		return true
 	}
 	return false
+}
+
+func (in *MovementInput) yawSinCos() (float64, float64){
+	yawRad := in.Yaw() * (math.Pi / 180)
+	return math.Sin(yawRad), math.Cos(yawRad)
 }

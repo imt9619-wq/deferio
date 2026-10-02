@@ -23,10 +23,3 @@ func (in *MovementInput) isSneak() bool{
 func (in *MovementInput) isJump() bool{
 	return in.Flags.Load(packet.InputFlagJumpDown)
 }
-
-func (in *MovementInput) speed() float64{
-	if in.isSprint(){
-		return SprintMovementMul * DefaultPlayerSpeed
-	}
-	return DefaultPlayerSpeed
-}

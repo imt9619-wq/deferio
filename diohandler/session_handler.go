@@ -2,7 +2,6 @@ package diohandler
 
 import (
 	"github.com/deferio/utils"
-	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/df-mc/dragonfly/server/world"
@@ -56,9 +55,7 @@ func (*DioClientPlayerAuthInputHandler) cancelPacketHandle(pk packet.Packet, p *
 	if cache == nil{
 		return false
 	}
-	cache.movements.Flags = pa.InputData
-	cache.movements.Rotation = cube.Rotation{float64(pa.Yaw), float64(pa.Pitch)}
-	cache.movements.RawMoveVector = utils.Mgl64Vec2FromMgl32(pa.RawMoveVector)
+	cache.movements.SeedFromPlayerAuthInputPacket(pa)
 	result := cache.movements.SimMovement()
 	_ = result
 	// TODO: include client movement correction, as well as making movement simulation not share 
