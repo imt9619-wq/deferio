@@ -32,6 +32,7 @@ func (c *PlayerConn) sendIncPlayer(){
 	data := c.data
 	pk := &IncomingPlayerPacket{
 		XUID: c.XUID,
+		id: c.id,
 		data: &PlayerGameData{
 			EntityUniqueID: data.EntityUniqueID,
 			EntityRuntimeID: data.EntityRuntimeID,
@@ -59,11 +60,11 @@ func (c *PlayerConn) sendIncPlayer(){
 		},
 	}
 	c.setShieldID(pk)
-	c.ForwardPacket(pk, SourceDeferioPacket)
+	c.forwardPacket(pk, ServerID, SourceDeferioPacket)
 }
 
 func (c *PlayerConn) DisconnectedPlayer(){
-	c.ForwardPacket(&DisconnectedPlayerPacket{}, SourceDeferioPacket)
+	c.forwardPacket(&DisconnectedPlayerPacket{id: c.id}, ServerID, SourceDeferioPacket)
 	c.idMu.Lock()
 	c.emptyIdSlot = append(c.emptyIdSlot, int(c.id))
 	c.idToPconn[c.id] = nil

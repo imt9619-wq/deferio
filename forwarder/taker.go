@@ -14,13 +14,14 @@ type Taker struct {
     idToPlayerRmu *sync.RWMutex
     idToPlayer    map[uint16]*ACplayerConn
     timePoint     time.Time
-	expects       chan Header
+	expects       chan PacketData
 	inc           chan *ACplayerConn
 	serverAddr    *atomic.Value
 }
 
 func (t *Taker) HandlePlayers(){
 	defer func(){
+		t.Close()
 		t.idToPlayerRmu.Lock()
 		for _, p := range t.idToPlayer {
 			p.Close()
@@ -34,57 +35,57 @@ func (t *Taker) HandlePlayers(){
 			return
 		default:
 		}
-		p, err := t.readPacket()
+		raw, err := t.readPacketRaw()
 		if err != nil{
-			t.conf.Log.Error(fmt.Sprintf("Error when readingPackets: %s", err), fmt.Sprintf("Taker(%s)", t.ServerAddress()), "handlePlayers")
-			var de decodeError
-			if errors.As(err, &de){
-				continue
-			}
-			t.Close()
+			t.conf.Log.Error(fmt.Sprintf("Error when readingPacketsInRaw: %s", err), fmt.Sprintf("Taker(%s)", t.ServerAddress()), "handlePlayers")
 			return
 		}
-		if !t.asExpected(*p.hdr){
-			t.conf.Log.Error(fmt.Sprintf("Unexpected Packet: %T", p.pk), fmt.Sprintf("Taker(%s)", t.ServerAddress()), "handlePlayers")
-			t.Close()
-		}
-		switch pk := p.pk.(type){
-		case *NewDialPacket:
-			t.timePoint = time.UnixMicro(pk.serverTime)
-			t.serverAddr.Store(pk.serverAddr)
-			continue
-		case *IncomingPlayerPacket:
-			t.setShieldID(pk)
-			t.idToPlayerRmu.Lock()
-			a := newACPlayerConn(p)
-			t.idToPlayer[p.hdr.id] = a
-			t.idToPlayerRmu.Unlock()
-			select{
-			case <-t.close:
-				a.Close()
+		if raw.id == ServerID{
+			p, err := t.readPacketFromRaw(raw)
+			if err != nil{
+				t.conf.Log.Error(fmt.Sprintf("Error when ServerID packet: %s", err), fmt.Sprintf("Taker(%s)", t.ServerAddress()), "handlePlayers")
+				if _, ok := errors.AsType[decodeError](err); ok{
+					continue
+				}
 				return
-			case t.inc <-a:
 			}
-			continue
-		case *DisconnectedPlayerPacket:
-			t.idToPlayerRmu.Lock()
-			pconn, ok := t.idToPlayer[p.hdr.id]
-			delete(t.idToPlayer, p.hdr.id)
-			t.idToPlayerRmu.Unlock()
-			if ok{
-				pconn.Close()
+			if !t.asExpected(*p.data){
+				t.conf.Log.Error(fmt.Sprintf("Unexpected Packet: %T", p.pk), fmt.Sprintf("Taker(%s)", t.ServerAddress()), "handlePlayers")
+				return
+			}
+			switch pk := p.pk.(type){
+			case *NewDialPacket:
+				t.timePoint = time.UnixMicro(pk.serverTime)
+				t.serverAddr.Store(pk.serverAddr)
+			case *IncomingPlayerPacket:
+				t.setShieldID(pk)
+				t.idToPlayerRmu.Lock()
+				a := newACPlayerConn(p, t)
+				t.idToPlayer[pk.id] = a
+				t.idToPlayerRmu.Unlock()
+				select{
+				case <-t.close:
+					a.Close()
+					return
+				case t.inc <-a:
+				}
+			case *DisconnectedPlayerPacket:
+				t.idToPlayerRmu.Lock()
+				pconn, ok := t.idToPlayer[pk.id]
+				delete(t.idToPlayer, pk.id)
+				t.idToPlayerRmu.Unlock()
+				if ok{
+					pconn.Close()
+				}
 			}
 			continue
 		}
+		
 		t.idToPlayerRmu.RLock()
-		player, ok := t.idToPlayer[p.hdr.id]
+		player, ok := t.idToPlayer[raw.id]
 		t.idToPlayerRmu.RUnlock()
 		if ok{
-			player.sendPacketToPlayer(PacketResult{
-				Source: p.hdr.source,
-				Packet: p.pk,
-				T: t.timeFromOffset(p.hdr.timeOffset),
-			})
+			player.sendPacketToPlayer(raw)
 		}
 	}
 }
@@ -98,14 +99,14 @@ func (t *Taker) ServerAddress() string {
 	return s
 }
 
-func (t *Taker) expect(hdr Header){
-	t.expects <- hdr
+func (t *Taker) expect(data PacketData){
+	t.expects <- data
 }
 
-func (t *Taker) asExpected(hdr Header) bool{
+func (t *Taker) asExpected(data PacketData) bool{
 	select{
 	case ex := <- t.expects:
-		return hdr.id == ex.id && hdr.dioPacket == ex.dioPacket && hdr.packetID == ex.packetID
+		return data.dioPacket == ex.dioPacket && data.packetID == ex.packetID
 	default:
 		return true
 	}

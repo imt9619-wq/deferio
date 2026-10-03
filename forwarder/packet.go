@@ -25,11 +25,6 @@ type ForwardPacket interface{
     Marshal(io protocol.IO)
 }
 
-type PacketWrapper struct{
-	pk ForwardPacket
-	hdr *Header
-}
-
 const(
 	IDNewDialPacket = iota + 1
 	IDIncomingPlayerPacket 
@@ -48,21 +43,21 @@ var (
 	}
 )
 
-func packetByHeader(h *Header) (ForwardPacket, error) {
-	if h.dioPacket {
-		f, ok := dioPool[h.packetID]
+func packetByHeader(data *PacketData) (ForwardPacket, error) {
+	if data.dioPacket {
+		f, ok := dioPool[data.packetID]
 		if !ok {
-			return nil, fmt.Errorf("forwarder: unknown dio packet id %d", h.packetID)
+			return nil, fmt.Errorf("forwarder: unknown dio packet id %d", data.packetID)
 		}
 		return f(), nil
 	}
 	pool := gtServerPool
-	if h.source == SourceClientPacket {
+	if data.source == SourceClientPacket {
 		pool = gtClientPool
 	}
-	f, ok := pool[h.packetID]
+	f, ok := pool[data.packetID]
 	if !ok {
-		return nil, fmt.Errorf("forwarder: unknown gt packet id %d", h.packetID)
+		return nil, fmt.Errorf("forwarder: unknown gt packet id %d", data.packetID)
 	}
 	return f(), nil
 }
@@ -135,17 +130,24 @@ func (i *PlayerGameData) Marshal(io protocol.IO){
 type IncomingPlayerPacket struct{
 	dioPacket
     XUID uint64
+    id   uint16
     data *PlayerGameData
 }
 func (*IncomingPlayerPacket) ID() uint32{return IDIncomingPlayerPacket}
 func (i *IncomingPlayerPacket) Marshal(io protocol.IO){
 	io.Uint64(&i.XUID)
+    io.Uint16(&i.id)
 	i.data.Marshal(io)
 }
 
-type DisconnectedPlayerPacket struct{dioPacket}
+type DisconnectedPlayerPacket struct{
+    dioPacket
+    id uint16
+}
 func (*DisconnectedPlayerPacket) ID() uint32{return IDDisconnectedPlayerPacket}
-func (*DisconnectedPlayerPacket) Marshal(io protocol.IO){}
+func (d *DisconnectedPlayerPacket) Marshal(io protocol.IO){
+    io.Uint16(&d.id)
+}
 
 type MovementSimResult struct{
     dioPacket

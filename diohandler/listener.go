@@ -26,7 +26,7 @@ type dioListener struct{
 }
 
 type DioHandlerConfig struct{
-	forwarder.DialConfig
+	forwarder.ForwarderConfig
 	ProxyListenerF func(conf server.Config) (server.Listener, error)
 }
 
@@ -58,7 +58,8 @@ func (d DioHandlerConfig) ListenerFWithConfig(address string) func(conf server.C
 			conf.Log.Info("Listener running.", "addr", mcl.Addr())
 			l = MCListenerWrap{Listener: mcl}
 		}
-		fw, err := forwarder.ForwarderConfig{DialConfig: d.DialConfig, ServerAddr: address}.Dial()
+		d.ForwarderConfig.ServerAddr = address
+		fw, err := d.ForwarderConfig.Dial()
 		if err != nil{
 			return nil, fmt.Errorf("create forwarder: %w", err)
 		}

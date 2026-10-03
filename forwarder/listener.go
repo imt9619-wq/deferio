@@ -59,10 +59,10 @@ func (l *Listener) accept() (*Taker, error){
 		idToPlayerRmu: &sync.RWMutex{},
 		idToPlayer: make(map[uint16]*ACplayerConn, 128),
 		inc: make(chan *ACplayerConn),
-		expects: make(chan Header, 10),
+		expects: make(chan PacketData, 10),
 		serverAddr: &atomic.Value{},
 	}
-	t.expect(Header{packetID: IDNewDialPacket, id: ServerID, dioPacket: true})
+	t.expect(PacketData{packetID: IDNewDialPacket, dioPacket: true})
 	return t, nil
 }
 

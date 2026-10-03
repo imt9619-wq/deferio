@@ -23,7 +23,8 @@ type Forwarder struct {
 }
 
 type ForwarderConfig struct{
-	DialConfig
+	ConnConfig
+	DialF          func(address string) (net.Conn, error)
 	ServerAddr string
     ShouldRedial  bool
     Redialretrys   int
@@ -34,14 +35,19 @@ func (conf ForwarderConfig) defaultForwarderConfig() ForwarderConfig{
 	if conf.ShouldRedial && conf.RedialIntervel == 0{
 		conf.RedialIntervel = 30 * time.Second
 	}
-	conf.DialConfig = conf.DialConfig.defaultDialConfig()
+	if conf.DialF == nil {
+		conf.DialF = func(address string) (net.Conn, error) {
+			return net.Dial("unix", address)
+		}
+	}
+	conf.ConnConfig = conf.defaultConnConfig()
 	return conf
 }
 
 func (conf ForwarderConfig) Dial() (*Forwarder, error){
 	conf = conf.defaultForwarderConfig()
 	if !conf.ShouldRedial{
-		conn, err := conf.DialConfig.dial()
+		conn, err := conf.dial()
 		if err != nil{
 			return nil, err
 		}
@@ -97,7 +103,7 @@ func (conf ForwarderConfig) Dial() (*Forwarder, error){
 		}
 	}
 	conf.fallback = tryRedial
-	conn, err := conf.DialConfig.dial()
+	conn, err := conf.dial()
 	if err != nil{
 		fw.Conn = conf.getEmptyConn()
 		fw.isConnDown.Store(true)
@@ -130,10 +136,10 @@ func (fw *Forwarder) forwardPacket(pk ForwardPacket, id uint16, source uint8) er
 	if fw.isConnDown.Load(){
 		return nil
 	}
-	hdr := Header{
+	data := PacketData{
 		timeOffset: time.Since(fw.timePoint)%Day,
 	}
-	return fw.Conn.forwardPacket(&PacketWrapper{pk: pk, hdr: &hdr}, id, source)
+	return fw.Conn.forwardPacket(&PacketWrapper{pk: pk, data: &data}, id, source)
 }
 
 func (fw *Forwarder) ondial() error{
@@ -152,4 +158,12 @@ func (fw *Forwarder) ondial() error{
 		}
 	}
 	return nil
+}
+
+func (conf ForwarderConfig) dial() (*Conn, error) {
+	conn, err := conf.DialF(conf.Address)
+	if err != nil {
+		return nil, fmt.Errorf("Forwarder: Failed to dial: %v", err)
+	}
+	return conf.newConn(conn), nil
 }

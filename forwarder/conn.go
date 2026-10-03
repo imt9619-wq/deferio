@@ -18,7 +18,8 @@ import (
 )
 
 const(
-	HeaderByteSize = 9
+	PacketDataByteSize = 7
+	IDByteSize = 2
 	PacketLenghtByteSize = 4
 	ServerID = (1 << 15) - 1
 	maxFrameBytes = 16 << 20
@@ -195,7 +196,8 @@ func (c *Conn) writePacket(pk *PacketWrapper) error{
 		internal.BufferPool.Put(buf)
 	}()
 	buf.Reset()
-	if err := pk.hdr.Write(buf); err != nil{
+	buf.Write([]byte{byte(pk.id >> 8), byte(pk.id)})
+	if err := pk.data.Write(buf); err != nil{
 		return err
 	}
 	if err := c.encodePacket(pk.pk, buf); err != nil{
@@ -290,46 +292,61 @@ func (c *Conn) Flush() error{
 }
 
 func (c *Conn) forwardPacket(pk *PacketWrapper, id uint16, source uint8) error{
-	pk.hdr.id = id
-	pk.hdr.packetID = pk.pk.ID()
-	pk.hdr.source = source
+	pk.id = id
+	pk.data.packetID = pk.pk.ID()
+	pk.data.source = source
 	_, ok := pk.pk.(dioPacket)
-	pk.hdr.dioPacket = ok
+	pk.data.dioPacket = ok
 	return c.writePacket(pk)
 }
 
-func (c *Conn) readPacket() (*PacketWrapper, error){
+func (c *Conn) readPacketRaw() (PacketInRaw, error){
 	var lenBuf [PacketLenghtByteSize]byte
 	if _, err := io.ReadFull(c.Conn, lenBuf[:]); err != nil{
-		return nil, err
+		return PacketInRaw{}, err
 	}
 	n := int(binary.BigEndian.Uint32(lenBuf[:]))
-	if n < HeaderByteSize || n > maxFrameBytes{
-		return nil, fmt.Errorf("forwarder: bad frame length %d", n)
+	if n < PacketDataByteSize + IDByteSize || n > maxFrameBytes{
+		return PacketInRaw{}, fmt.Errorf("forwarder: bad frame length %d", n)
 	}
 	if cap(c.readBuf) < n{
 		c.readBuf = make([]byte, n)
 	}else{
 		c.readBuf = c.readBuf[:n]
 	}
-	if _, err := io.ReadFull(c.Conn, c.readBuf); err != nil {
+	if _, err := io.ReadFull(c.Conn, c.readBuf); err != nil{
+		return PacketInRaw{}, err
+	}
+	raw := make([]byte, (n - IDByteSize))
+	copy(raw, c.readBuf[IDByteSize:])
+	return PacketInRaw{
+		id: binary.BigEndian.Uint16(c.readBuf[:IDByteSize]),
+		raw: raw,
+	}, nil
+}
+
+func (c *Conn) readPacketFromRaw(raw PacketInRaw) (*PacketWrapper, error){
+	body := bytes.NewBuffer(raw.raw)
+	data := &PacketData{}
+	if err := data.Read(body); err != nil{
 		return nil, err
 	}
-	new := make([]byte, n)
-	copy(new, c.readBuf)
-	body := bytes.NewBuffer(new)
-	hdr := &Header{}
-	if err := hdr.Read(body); err != nil{
-		return nil, err
-	}
-	pk, err := packetByHeader(hdr)
+	pk, err := packetByHeader(data)
 	if err != nil{
 		return nil, err
 	}
 	if err := c.decodePacket(pk, body); err != nil{
 		return nil, err
 	}
-	return &PacketWrapper{pk: pk, hdr: hdr}, nil
+	return &PacketWrapper{pk: pk, data: data, id: raw.id}, nil
+}
+
+func (c *Conn) readPacket() (*PacketWrapper, error){
+	new, err := c.readPacketRaw()
+	if err != nil{
+		return nil, err
+	}
+	return c.readPacketFromRaw(new)
 }
 
 type decodeError struct{error}
