@@ -6,32 +6,15 @@ import (
 
 type PlayerConn struct {
 	*Forwarder
-    XUID        uint64
+    xuid        uint64
     id          uint16
     data        *minecraft.GameData
-}
-
-func (c *PlayerConn) NewIncomingPlayer(data minecraft.GameData){
-	dataCopy := data
-	c.data = &dataCopy
-	c.idMu.Lock()
-	if lenght := len(c.emptyIdSlot); lenght > 0{
-		id := c.emptyIdSlot[lenght-1]
-		c.emptyIdSlot = c.emptyIdSlot[:lenght-1]
-		c.idToPconn[id] = c
-		c.id = uint16(id)
-	} else{
-		c.idToPconn = append(c.idToPconn, c)
-		c.id = uint16(len(c.idToPconn) - 1)
-	}
-	c.idMu.Unlock()
-	c.sendIncPlayer()
 }
 
 func (c *PlayerConn) sendIncPlayer(){
 	data := c.data
 	pk := &IncomingPlayerPacket{
-		XUID: c.XUID,
+		XUID: c.xuid,
 		id: c.id,
 		data: &PlayerGameData{
 			EntityUniqueID: data.EntityUniqueID,

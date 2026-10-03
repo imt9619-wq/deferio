@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/sandertv/gophertunnel/minecraft"
 )
 
 const(
@@ -16,7 +18,7 @@ type Forwarder struct {
 	*Conn
     idMu            *sync.Mutex
     emptyIdSlot     []int
-    idToPconn        []*PlayerConn
+    idToPconn       []*PlayerConn
 	timePoint       time.Time
 	serverAddr      string
 	isConnDown      *atomic.Bool
@@ -24,11 +26,12 @@ type Forwarder struct {
 
 type ForwarderConfig struct{
 	ConnConfig
-	DialF          func(address string) (net.Conn, error)
-	ServerAddr string
-    ShouldRedial  bool
+    DialF          func(address string) (net.Conn, error)
+    ServerAddr     string
+    ShouldRedial   bool
     Redialretrys   int
     RedialIntervel time.Duration
+    NopForwarder   bool
 }
 
 func (conf ForwarderConfig) defaultForwarderConfig() ForwarderConfig{
@@ -44,8 +47,11 @@ func (conf ForwarderConfig) defaultForwarderConfig() ForwarderConfig{
 	return conf
 }
 
-func (conf ForwarderConfig) Dial() (*Forwarder, error){
+func (conf ForwarderConfig) Dial() (ForwarderConn, error){
 	conf = conf.defaultForwarderConfig()
+	if conf.NopForwarder{
+		return NopForwarderConn{}, nil
+	}
 	if !conf.ShouldRedial{
 		conn, err := conf.dial()
 		if err != nil{
@@ -166,4 +172,26 @@ func (conf ForwarderConfig) dial() (*Conn, error) {
 		return nil, fmt.Errorf("Forwarder: Failed to dial: %v", err)
 	}
 	return conf.newConn(conn), nil
+}
+
+func (fw *Forwarder) NewIncomingPlayer(data minecraft.GameData, xuid uint64) ForwarderPlayerConn{
+	c := &PlayerConn{
+		Forwarder: fw,
+		xuid: xuid,
+	}
+	dataCopy := data
+	c.data = &dataCopy
+	c.idMu.Lock()
+	if lenght := len(c.emptyIdSlot); lenght > 0{
+		id := c.emptyIdSlot[lenght-1]
+		c.emptyIdSlot = c.emptyIdSlot[:lenght-1]
+		c.idToPconn[id] = c
+		c.id = uint16(id)
+	} else{
+		c.idToPconn = append(c.idToPconn, c)
+		c.id = uint16(len(c.idToPconn) - 1)
+	}
+	c.idMu.Unlock()
+	c.sendIncPlayer()
+	return c
 }

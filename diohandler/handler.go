@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/deferio/utils"
 	"github.com/deferio/forwarder"
+	"github.com/deferio/utils"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/entity"
 	"github.com/df-mc/dragonfly/server/player"
@@ -21,7 +21,7 @@ type DioHandler struct{
 	player.Handler
 	s  *session.Session
 	p  *playerCache
-	fw *forwarder.PlayerConn
+	pc forwarder.ForwarderPlayerConn
 }
 
 const(
@@ -40,11 +40,7 @@ func newDioHandler(p *player.Player) *DioHandler{
 	if err != nil{
 		panic(fmt.Sprintf("NewDioHandler: Cannot convert XUID from string to uint64 for %s (xuid: %s)", p.Name(), p.XUID()))
 	}
-	dih.fw = &forwarder.PlayerConn{
-		Forwarder: conn.fw,
-		XUID: xuid,
-	}
-	dih.fw.NewIncomingPlayer(conn.Conn.(*minecraft.Conn).GameData())
+	dih.pc = conn.fw.NewIncomingPlayer(conn.Conn.(*minecraft.Conn).GameData(), xuid)
 	dih.p = newPlayerCache(p)
 	conn.handlerRegsistered.Store(false)
 	conn.h = dih
@@ -109,6 +105,6 @@ func (d *DioHandler) HandleHurt(ctx *player.Context, damage *float64, immune boo
 }
 
 func (d *DioHandler) HandleQuit(p *player.Player){
-	d.fw.DisconnectedPlayer()
+	d.pc.DisconnectedPlayer()
 	d.Handler.HandleQuit(p)
 }

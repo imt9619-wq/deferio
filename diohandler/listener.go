@@ -22,7 +22,7 @@ func (w MCListenerWrap) Disconnect(conn session.Conn, reason string) error{
 
 type dioListener struct{
 	server.Listener
-	fw *forwarder.Forwarder
+	fw forwarder.ForwarderConn
 }
 
 type DioHandlerConfig struct{

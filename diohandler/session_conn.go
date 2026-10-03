@@ -3,8 +3,8 @@ package diohandler
 import (
 	"sync/atomic"
 
-	"github.com/deferio/utils"
 	"github.com/deferio/forwarder"
+	"github.com/deferio/utils"
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
@@ -12,7 +12,7 @@ import (
 type dioSessionConn struct {
 	session.Conn
 	h                  *DioHandler
-	fw                 *forwarder.Forwarder
+	fw                 forwarder.ForwarderConn
 	handlerRegsistered *atomic.Bool
 }
 
