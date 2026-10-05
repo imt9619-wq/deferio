@@ -1,11 +1,13 @@
 package diohandler
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/deferio/forwarder"
 	"github.com/deferio/utils"
 	"github.com/df-mc/dragonfly/server/session"
+	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
@@ -14,20 +16,12 @@ type dioSessionConn struct {
 	h                  *DioHandler
 	fw                 forwarder.ForwarderConn
 	handlerRegsistered *atomic.Bool
+	data               *minecraft.GameData
 }
 
-func (d *dioListener) Accept() (session.Conn, error) {
-	conn, err := d.Listener.Accept()
-	if err != nil {
-		return nil, err
-	}
-	handlerRegsistered := &atomic.Bool{}
-	handlerRegsistered.Store(true)
-	return &dioSessionConn{
-		Conn:               conn,
-		fw:                 d.fw,
-		handlerRegsistered: handlerRegsistered,
-	}, nil
+func (c *dioSessionConn) StartGameContext(ctx context.Context, data minecraft.GameData) error{
+	c.data = &data
+	return c.Conn.StartGameContext(ctx, data)
 }
 
 func (c *dioSessionConn) ReadPacket() (packet.Packet, error) {

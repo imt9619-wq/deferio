@@ -13,7 +13,6 @@ import (
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
-	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
@@ -40,7 +39,8 @@ func newDioHandler(p *player.Player) *DioHandler{
 	if err != nil{
 		panic(fmt.Sprintf("NewDioHandler: Cannot convert XUID from string to uint64 for %s (xuid: %s)", p.Name(), p.XUID()))
 	}
-	dih.pc = conn.fw.NewIncomingPlayer(conn.Conn.(*minecraft.Conn).GameData(), xuid)
+	dih.pc = conn.fw.NewIncomingPlayer(*conn.data, xuid)
+	conn.data = nil
 	dih.p = newPlayerCache(p)
 	conn.handlerRegsistered.Store(false)
 	conn.h = dih

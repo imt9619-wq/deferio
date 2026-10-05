@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/deferio/forwarder"
 	"github.com/df-mc/dragonfly/server"
@@ -65,4 +66,18 @@ func (d DioHandlerConfig) ListenerFWithConfig(address string) func(conf server.C
 		}
 		return &dioListener{Listener: l, fw: fw}, nil
 	}
+}
+
+func (d *dioListener) Accept() (session.Conn, error) {
+	conn, err := d.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	handlerRegsistered := &atomic.Bool{}
+	handlerRegsistered.Store(true)
+	return &dioSessionConn{
+		Conn:               conn,
+		fw:                 d.fw,
+		handlerRegsistered: handlerRegsistered,
+	}, nil
 }

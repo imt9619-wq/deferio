@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"math"
+
 	"github.com/chewxy/math32"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/go-gl/mathgl/mgl32"
@@ -11,6 +13,29 @@ import (
 const(
 	ProbeOffset = 0.003
 )
+
+func SubChunkVecFromSubIndex(index int32) SubChunkVec{
+	index -= 1
+	s := SubChunkVec{}
+	s[0] = index/9-1
+	index = index%9
+	s[1] = index/3-1
+	index = index%3
+	s[2] = index-1
+	return s
+}
+
+func SubChunkVecFromVec3(vec3 mgl64.Vec3) SubChunkVec{
+	return SubChunkVec{int32(math.Floor(vec3[0])) >> 4, int32(math.Floor(vec3[1])) >> 4, int32(math.Floor(vec3[2])) >> 4}
+}
+
+func Mgl64FromSubChunkVec(s SubChunkVec) mgl64.Vec3{
+	return mgl64.Vec3{float64(s[0] << 4), float64(s[1] << 4), float64(s[2] << 4)}
+}
+
+func SubChunkVecFromCubePos(pos cube.Pos) SubChunkVec{
+	return SubChunkVec{int32(pos[0]) >> 4, int32(pos[1]) >> 4, int32(pos[2]) >> 4}
+}
 
 func Mgl64Vec2FromMgl32(vec mgl32.Vec2) mgl64.Vec2{
 	return mgl64.Vec2{float64(vec[0]), float64(vec[0])}
