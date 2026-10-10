@@ -50,7 +50,8 @@ func (l *Listener) accept() (*Taker, error){
 	if err != nil{
 		return nil, err
 	}
-	conn := l.conf.newConn(c)
+	conn := l.conf.getEmptyConn()
+	conn.newNetConn(c)
 	l.connMu.Lock()
 	l.conns = append(l.conns, conn)
 	l.connMu.Unlock()

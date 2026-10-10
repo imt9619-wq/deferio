@@ -3,6 +3,7 @@ package forwarder
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,8 +32,8 @@ type ConnConfig struct{
     BytePerWrite    int
     MaxBufferedByte int
 	Log             slog.Logger
-	// will be called when Conn is closed
-	fallback        func()
+	// will be called when Conn is closing, can return a fallback function to run after closing
+	onClose         func()(onAfterClose func())
 }
 
 func (f ConnConfig) defaultConnConfig() ConnConfig{
@@ -52,14 +53,11 @@ func (f ConnConfig) defaultConnConfig() ConnConfig{
 }
 
 type Conn struct{
-	net.Conn
+	conn      net.Conn
     conf      ConnConfig
     closeOnce *sync.Once
-    fallbackOnce *sync.Once
     close     chan struct{}
 	done      chan struct{}
-	skipFallback *atomic.Bool
-	loopStarted  *atomic.Bool
 
 	sendBufMu             *sync.Mutex
     sendBuf, sendBufSpare [][]byte
@@ -74,108 +72,76 @@ type Conn struct{
 func (f ConnConfig) getEmptyConn() *Conn{
 	return &Conn{
 		conf: f,
-		closeOnce: &sync.Once{},
-		fallbackOnce: &sync.Once{},
-		close: make(chan struct{}),
 		sendBufMu: &sync.Mutex{},
 		sendBuf: make([][]byte, 0, 4096),
 		sendBufSpare: make([][]byte, 0, 4096),
 		flushNow: make(chan struct{}, 1),
-		done: make(chan struct{}),
-		skipFallback: &atomic.Bool{},
-		loopStarted: &atomic.Bool{},
 		shieldID: &atomic.Int32{},
 		shieldIDSet: &atomic.Bool{},
 	}
 }
 
-func (f ConnConfig) newConn(conn net.Conn) *Conn{
-	c := f.getEmptyConn()
-	c.Conn = conn
-	c.loopStarted.Store(true)
+func (c *Conn) newNetConn(conn net.Conn){
+	c.reset()
+	c.conn = conn
 	go c.flushLoop()
-	return c
 }
 
 func (c *Conn) reset(){
+	c.conn = nil
 	c.closeOnce = &sync.Once{}
-	c.fallbackOnce = &sync.Once{}
 	c.close = make(chan struct{})
-	c.done = make(chan struct{})
-	c.skipFallback.Store(false)
-	c.loopStarted.Store(false)
 	c.sendBufMu.Lock()
 	c.sendBuf = c.sendBuf[:0]
 	c.sendBufLen = 0
 	c.sendBufMu.Unlock()
 }
 
-func (c *Conn) Close() error{
-	return c.closeConn(true)
-}
-
-func (c *Conn) closeConn(retry bool) error{
-	if !retry{
-		c.skipFallback.Store(true)
-	}
+func (c *Conn) Close(){
 	c.closeOnce.Do(func(){
+		var onAfterClose func()
+		if c.conf.onClose != nil{
+			onAfterClose = c.conf.onClose()
+		}
 		close(c.close)
-	})
-	if c.loopStarted.Load(){
-		<-c.done
-	}
-	if !c.skipFallback.Load(){
-		c.runFallback()
-	}
-	return nil
-}
-
-func (c *Conn) runFallback(){
-	if c.conf.fallback == nil{
-		return
-	}
-	c.fallbackOnce.Do(func(){
-		go c.conf.fallback()
+		if c.done != nil{
+			<-c.done
+		}
+		if c.conn != nil{
+			_ = c.conn.Close()
+			c.conn = nil
+		}
+		if onAfterClose != nil{
+			go onAfterClose()
+		}
 	})
 }
 
 func (c *Conn) flushLoop(){
 	ticker := time.NewTicker(c.conf.FlushRate)
 	lastWrite := time.Now()
-	defer ticker.Stop()
+	c.done = make(chan struct{})
 	defer func(){
+		ticker.Stop()
 		close(c.done)
-		if !c.skipFallback.Load(){
-			c.runFallback()
-		}
+		c.Close()
 	}()
 	for{
 		select{
 		case <-c.close:
-			_ = c.Flush()
-			if c.Conn != nil{
-				_ = c.Conn.Close()
-			}
+			_ = c.flush()
 			return
 		case t := <-ticker.C:
 			if t.Before(lastWrite.Add(c.conf.FlushRate)){
 				continue
 			}
-			if err := c.Flush(); err != nil{
-				c.closeOnce.Do(func(){close(c.close)})
-				if c.Conn != nil{
-					_ = c.Conn.Close()
-				}
+			if err := c.flush(); err != nil{
 				return
 			}
 			lastWrite = time.Now()
 		// we flush right away before tick flush if we are buffering a large amount of bytes
 		case <-c.flushNow:
-			if err := c.Flush(); err != nil{
-				c.closeOnce.Do(func(){close(c.close)})
-				if c.Conn != nil{
-					_ = c.Conn.Close()
-				}
+			if err := c.flush(); err != nil{
 				return
 			}
 			lastWrite = time.Now()
@@ -183,7 +149,34 @@ func (c *Conn) flushLoop(){
 	}
 }
 
-func (c *Conn) writePacket(pk *PacketWrapper) error{
+func (c *Conn) Flush(){
+	select{
+	case c.flushNow <- struct{}{}:
+	default:
+	}
+}
+
+func isIOError(err error) bool{
+	if err == nil {
+		return false
+	}
+	if _, ok := errors.AsType[encodeError](err); ok {
+		return false
+	}
+	if _, ok := errors.AsType[decodeError](err); ok {
+		return false
+	}
+	var op *net.OpError
+	if errors.As(err, &op) {
+		return true
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, net.ErrClosed)
+}
+
+func (c *Conn) writePacket(pk *PacketWrapper) (err error){
 	select{
 	case <-c.close:
 		return fmt.Errorf("Forwarder Conn: trying to write packet on closed Conn")
@@ -194,13 +187,16 @@ func (c *Conn) writePacket(pk *PacketWrapper) error{
 	defer func(){
 		buf.Reset()
 		internal.BufferPool.Put(buf)
+		if err != nil && isIOError(err){
+			c.Close()
+		}
 	}()
 	buf.Reset()
 	buf.Write([]byte{byte(pk.id >> 8), byte(pk.id)})
-	if err := pk.data.Write(buf); err != nil{
+	if err = pk.data.Write(buf); err != nil{
 		return err
 	}
-	if err := c.encodePacket(pk.pk, buf); err != nil{
+	if err = c.encodePacket(pk.pk, buf); err != nil{
 		return err
 	}
 
@@ -220,7 +216,7 @@ func (c *Conn) writePacket(pk *PacketWrapper) error{
 	c.sendBufLen += len(frame)
 	flushNow := c.sendBufLen >= c.conf.MaxBufferedByte
 	c.sendBufMu.Unlock()
-
+	
 	if flushNow{
 		select{
 		case c.flushNow <- struct{}{}:
@@ -246,7 +242,7 @@ func (c *Conn) encodePacket(pk ForwardPacket, buf *bytes.Buffer) (err error){
 }
 
 // most copied from gophertunnel/minecraft.(*Conn).Flush()
-func (c *Conn) Flush() error{
+func (c *Conn) flush() error{
 	c.sendBufMu.Lock()
 	if len(c.sendBuf) == 0{
 		c.sendBufMu.Unlock()
@@ -271,13 +267,13 @@ func (c *Conn) Flush() error{
 	buf.Reset()
 	for _, pk := range send{
 		if buf.Len() > 0 && buf.Len()+len(pk) > c.conf.BytePerWrite{
-			if _, err := c.Write(buf.Bytes()); err != nil{
+			if _, err := c.conn.Write(buf.Bytes()); err != nil{
 				return err
 			}
 			buf.Reset()
 		}
 		if len(pk) > c.conf.BytePerWrite{
-			if _, err := c.Write(pk); err != nil{
+			if _, err := c.conn.Write(pk); err != nil{
 				return err
 			}
 			continue
@@ -285,7 +281,7 @@ func (c *Conn) Flush() error{
 		buf.Write(pk)
 	}
 	if buf.Len() > 0{
-		_, err := c.Write(buf.Bytes())
+		_, err := c.conn.Write(buf.Bytes())
 		return err
 	}
 	return nil
@@ -302,7 +298,7 @@ func (c *Conn) forwardPacket(pk *PacketWrapper, id uint16, source uint8) error{
 
 func (c *Conn) readPacketRaw() (PacketInRaw, error){
 	var lenBuf [PacketLenghtByteSize]byte
-	if _, err := io.ReadFull(c.Conn, lenBuf[:]); err != nil{
+	if _, err := io.ReadFull(c.conn, lenBuf[:]); err != nil{
 		return PacketInRaw{}, err
 	}
 	n := int(binary.BigEndian.Uint32(lenBuf[:]))
@@ -314,7 +310,7 @@ func (c *Conn) readPacketRaw() (PacketInRaw, error){
 	}else{
 		c.readBuf = c.readBuf[:n]
 	}
-	if _, err := io.ReadFull(c.Conn, c.readBuf); err != nil{
+	if _, err := io.ReadFull(c.conn, c.readBuf); err != nil{
 		return PacketInRaw{}, err
 	}
 	raw := make([]byte, (n - IDByteSize))

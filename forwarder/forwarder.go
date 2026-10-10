@@ -67,7 +67,6 @@ func (conf ForwarderConfig) Dial() (ForwarderConn, error){
 			isConnDown: &atomic.Bool{},
 		}	
 		if err = fw.ondial(); err != nil{
-			_ = fw.Conn.closeConn(false)
 			return nil, err
 		}
 		return fw, nil
@@ -80,62 +79,45 @@ func (conf ForwarderConfig) Dial() (ForwarderConn, error){
 		serverAddr: conf.ServerAddr,
 		isConnDown: &atomic.Bool{},
 	}
-	var tryRedial func()
-	tryRedial = func(){
+	onConnDown := func() (func()){
 		fw.isConnDown.Store(true)
-		rt := 0
-		for{
-			if conf.Redialretrys > 0 && rt >= conf.Redialretrys{
-				conf.Log.Error(fmt.Sprintf("gave up dialing AC after %d retries", rt), "Forwarder", "tryRedial")
+		return func(){
+			rt := 0
+			for{
+				if conf.Redialretrys > 0 && rt >= conf.Redialretrys{
+					conf.Log.Error(fmt.Sprintf("gave up dialing AC after %d retries", rt), "Forwarder", "tryRedial")
+					return
+				}
+				conn, err := conf.DialF(conf.Address)
+				rt++
+				if err != nil{
+					conf.Log.Error(fmt.Sprintf("Failed redial on AC server (retry: %d): %s", rt, err), "Forwarder", "tryRedial")
+					time.Sleep(conf.RedialIntervel)
+					continue
+				}
+				fw.Conn.newNetConn(conn)
+				fw.isConnDown.Store(false)
+				if err = fw.ondial(); err != nil{
+					conf.Log.Error(fmt.Sprintf("Failed to send newdial packet after redial: %s", err), "Forwarder", "tryRedial")
+				}
 				return
 			}
-			conn, err := conf.DialF(conf.Address)
-			rt++
-			if err != nil{
-				conf.Log.Error(fmt.Sprintf("Failed redial on AC server (retry: %d): %s", rt, err), "Forwarder", "tryRedial")
-				time.Sleep(conf.RedialIntervel)
-				continue
-			}
-			fw.installConn(conn, tryRedial)
-			fw.isConnDown.Store(false)
-			if err = fw.ondial(); err != nil{
-				conf.Log.Error(fmt.Sprintf("Failed to send newdial packet after redial: %s", err), "Forwarder", "tryRedial")
-				fw.isConnDown.Store(true)
-				_ = fw.Conn.closeConn(false)
-				time.Sleep(conf.RedialIntervel)
-				continue
-			}
-			return
 		}
 	}
-	conf.fallback = tryRedial
+	conf.onClose = onConnDown
 	conn, err := conf.dial()
 	if err != nil{
 		fw.Conn = conf.getEmptyConn()
-		fw.isConnDown.Store(true)
-		go tryRedial()
+		onAfterClose := onConnDown()
+		go onAfterClose()
 		return fw, nil
 	}
 	fw.Conn = conn
+	fw.isConnDown.Store(false)
 	if err = fw.ondial(); err != nil{
-		fw.isConnDown.Store(true)
-		_ = fw.Conn.closeConn(false)
-		go tryRedial()
+		conf.Log.Error(fmt.Sprintf("Failed to send newdial packet after redial: %s", err), "Forwarder", "tryRedial")
 	}
 	return fw, nil
-}
-
-func (fw *Forwarder) installConn(nc net.Conn, fallback func()){
-	if fw.Conn.loopStarted.Load(){
-		_ = fw.Conn.closeConn(false)
-	}
-	fw.Conn.reset()
-	fw.Conn.conf.fallback = fallback
-	fw.Conn.Conn = nc
-	fw.Conn.shieldID.Store(0)
-	fw.Conn.shieldIDSet.Store(false)
-	fw.Conn.loopStarted.Store(true)
-	go fw.Conn.flushLoop()
 }
 
 func (fw *Forwarder) forwardPacket(pk ForwardPacket, id uint16, source uint8) error{
@@ -171,7 +153,9 @@ func (conf ForwarderConfig) dial() (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Forwarder: Failed to dial: %v", err)
 	}
-	return conf.newConn(conn), nil
+	c := conf.getEmptyConn()
+	c.newNetConn(conn)
+	return c, nil
 }
 
 func (fw *Forwarder) NewIncomingPlayer(data minecraft.GameData, xuid uint64) ForwarderPlayerConn{
